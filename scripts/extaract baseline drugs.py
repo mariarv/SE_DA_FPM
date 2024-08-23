@@ -138,8 +138,8 @@ def main(pickle_file_path):
     print(f"Saved DS DataFrame to {pickle_filename_ds}")
     
     pickle_filename_vs = 'df_combined_vs_all_drugs.pkl'
-    #with open(pickle_filename_vs, 'wb') as f:
-    #    pickle.dump(df_vs, f)
+    with open(pickle_filename_vs, 'wb') as f:
+        pickle.dump(df_vs, f)
     print(f"Saved VS DataFrame to {pickle_filename_vs}")
 
     # Optionally, display the DataFrames

@@ -6,6 +6,15 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from scipy.stats import skew, kurtosis
 import seaborn as sns 
+from scipy.signal import welch, butter, filtfilt, resample
+import pickle
+
+# Function to load the DataFrame from a pickle file
+def load_dataframe(pickle_file_path):
+    with open(pickle_file_path, 'rb') as f:
+        df = pickle.load(f)
+    return df
+
 # Function to calculate full width at half maximum (FWHM)
 def calculate_fwhm(trace, sampling_rate):
     half_max = np.max(trace) / 2
@@ -231,3 +240,68 @@ def get_valid_normalized_traces_df(df, session_ids, region_id, duration, start_i
     valid_traces = region_df['data'].apply(lambda x: x[start_index:end_index])
     normalized_traces = valid_traces.apply(lambda x: normalize_trace(x, norm_end_index))
     return pd.DataFrame({'session_id': region_df['session_id'], 'duration': region_df['duration'], 'region_id': region_df['region_id'], 'data': valid_traces, 'normalized_data': normalized_traces})
+
+
+
+################################## normalisation 
+
+def remove_trend_polyfit(data, degree=2):
+    x = np.arange(len(data))
+    p = np.polyfit(x, data, degree)
+    trend = np.polyval(p, x)
+    detrended_data = data - trend
+    return detrended_data
+
+def robust_zscore(data):
+    median = np.median(data)
+    iqr = np.percentile(data, 75) - np.percentile(data, 25)
+    return (data - median) / iqr
+
+def resample_signal(data, original_rate, target_rate):
+    num_samples = int(len(data) * (target_rate / original_rate))
+    resampled_data = resample(data, num_samples)
+    return resampled_data
+
+# High-pass filter to remove very slow frequencies (e.g., below 0.05 Hz)
+def high_pass_filter(data, fs, cutoff=0.05):
+    nyquist = 0.5 * fs
+    normal_cutoff = cutoff / nyquist
+    b, a = butter(1, normal_cutoff, btype='high', analog=False)
+    filtered_data = filtfilt(b, a, data)
+    return filtered_data
+
+# Low-pass filter to focus on slow frequencies (e.g., below 5 Hz)
+def low_pass_filter(data, fs, cutoff=5.0):
+    nyquist = 0.5 * fs
+    normal_cutoff = cutoff / nyquist
+    b, a = butter(1, normal_cutoff, btype='low', analog=False)
+    filtered_data = filtfilt(b, a, data)
+    return filtered_data
+
+
+# Function to extract unique identifier from the "file" field
+def get_animal_id(file_name):
+    return file_name[:9]
+
+# Function to compute the power spectrum using Welch's method and convert it to dB
+def compute_power_spectrum_dB(data, fs, nperseg=4096, noverlap=None, max_freq=30):
+    if not isinstance(data, np.ndarray):
+        data = np.array(data)
+    
+    # If noverlap is not provided, default to 75% of nperseg
+    if noverlap is None:
+        noverlap = nperseg * 3 // 4
+    
+    # Compute the power spectrum using Welch's method
+    freqs, power = welch(data, fs, nperseg=nperseg, noverlap=noverlap)
+    
+    # Convert power to decibels (dB)
+    power_dB = np.log(power)
+    
+    # Focus on the very low frequencies, up to max_freq Hz
+    mask = freqs <= max_freq
+    return np.log(freqs[mask]), power[mask]
+
+# Function to extract unique identifier from the "file" field
+def get_animal_id(file_name):
+    return file_name[:9]

@@ -9,6 +9,9 @@ data/
 .DS_Store
 .vscode/
 .venv/
+*.pptx
+*.png
+.DS_Store
 pyunicorn-0.7.0/CHANGELOG.rst
 pyunicorn-0.7.0/CONTRIBUTIONS.rst
 pyunicorn-0.7.0/LICENSE.txt
@@ -181,3 +184,4 @@ pyunicorn-0.7.0/tests/test_funcnet/test_coupling_analysis.py
 pyunicorn-0.7.0/tests/test_timeseries/test_joint_recurrence_plot.py
 pyunicorn-0.7.0/tests/test_timeseries/test_recurrence_plot.py
 pyunicorn-0.7.0/tests/test_timeseries/test_timeseries.py
+.gitignore

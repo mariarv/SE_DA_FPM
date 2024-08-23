@@ -102,7 +102,7 @@ for i, label in enumerate(labels):
     ax.scatter(umap_embedding[i, 0], umap_embedding[i, 1], umap_embedding[i, 2], 
                color=label_color_map[label], label=label if label not in ax.get_legend_handles_labels()[1] else "")
 
-ax.set_title('UMAP Embedding of Signals')
+ax.set_title('SVD Embedding of Signals')
 ax.set_xlabel('Component 1')
 ax.set_ylabel('Component 2')
 ax.set_zlabel('Component 3')
