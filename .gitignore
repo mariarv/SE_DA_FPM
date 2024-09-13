@@ -186,3 +186,4 @@ pyunicorn-0.7.0/tests/test_timeseries/test_joint_recurrence_plot.py
 pyunicorn-0.7.0/tests/test_timeseries/test_recurrence_plot.py
 pyunicorn-0.7.0/tests/test_timeseries/test_timeseries.py
 .gitignore
+OASI
