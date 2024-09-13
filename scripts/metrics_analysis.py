@@ -8,6 +8,10 @@ from scipy.stats import skew, kurtosis
 import seaborn as sns 
 from scipy.signal import welch, butter, filtfilt, resample
 import pickle
+from scipy.signal import convolve, find_peaks
+from sklearn.metrics import mean_squared_error
+import logging
+import os 
 
 # Function to load the DataFrame from a pickle file
 def load_dataframe(pickle_file_path):
@@ -305,3 +309,46 @@ def compute_power_spectrum_dB(data, fs, nperseg=4096, noverlap=None, max_freq=30
 # Function to extract unique identifier from the "file" field
 def get_animal_id(file_name):
     return file_name[:9]
+
+
+def simple_deconvolution(signal, template_signal):
+    # Perform convolution-based template matching
+    template = template_signal / np.sqrt(np.sum(template_signal**2))
+
+    deconvolved_signal = convolve(signal, template[::-1], mode='same')
+    scaling_factor = np.sqrt(np.sum(signal**2) / np.sum(deconvolved_signal**2))
+    deconvolved_signal *= scaling_factor
+    return deconvolved_signal
+
+def evaluate_deconvolution(original_signal, deconvolved_signal):
+    # Signal-to-Noise Ratio (SNR)
+    snr = np.mean(deconvolved_signal) / np.std(deconvolved_signal)
+    
+    # Root Mean Square Error (RMSE)
+    rmse = np.sqrt(mean_squared_error(original_signal, deconvolved_signal))
+    
+    # Correlation Coefficient
+    correlation = np.corrcoef(original_signal, deconvolved_signal)[0, 1]
+
+    return snr, rmse, correlation
+
+def load_template(template_file_path, dur):
+    if not os.path.exists(template_file_path):
+        logging.error(f"File not found: {template_file_path}")
+        raise FileNotFoundError(f"File not found: {template_file_path}")
+    template_ = pd.read_csv(template_file_path)
+    template = template_[dur].values
+    logging.info(f"Loaded template from {template_file_path}")
+    return np.array(template)
+
+def richardson_lucy(signal, template, iterations=10):
+    template = template / np.sqrt(np.sum(template**2))
+
+    template_flip = template[::-1]
+    deconvolved = np.ones_like(signal)
+    
+    for i in range(iterations):
+        relative_blur = signal / (convolve(deconvolved, template, 'same') + 1e-5)
+        deconvolved *= convolve(relative_blur, template_flip, 'same')
+    
+    return deconvolved

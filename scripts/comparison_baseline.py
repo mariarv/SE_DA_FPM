@@ -9,6 +9,8 @@ import metrics_analysis as m_a
 from sklearn.decomposition import PCA
 from mpl_toolkits.mplot3d import Axes3D
 import umap
+from scipy.optimize import curve_fit
+
 # Constants
 ORIGINAL_RATE = 1017.252625
 TARGET_RATE = 1000
@@ -17,6 +19,43 @@ SEGMENT_DURATION = 3 * 60  # 3 minutes in seconds
 # Paths to the pickle files created previously
 pickle_file_path_vs = 'df_combined_vs_all_drugs.pkl'
 pickle_file_path_ds = 'df_combined_ds_all_drugs.pkl'
+
+def one_over_f(freqs, A, n):
+    return A * np.exp(-n * freqs)
+def normalize_curve(psd):
+    # Remove NaN and Inf values
+    clean_psd = psd[np.isfinite(psd)]
+    
+    if len(clean_psd) == 0:
+        raise ValueError("All values in the PSD are NaN or Inf, cannot normalize.")
+    
+    # Normalize the PSD by the maximum finite value
+    return psd / np.max(clean_psd)
+# Function to perform the 1/f fitting
+def fit_one_over_f(freqs, psd):
+    # Remove non-finite values (NaN, Inf) from both freqs and psd
+    mask = np.isfinite(freqs) & np.isfinite(psd)
+    clean_freqs = freqs[mask]
+    clean_psd = psd[mask]
+    threshold = 1e-10
+    clean_freqs = clean_freqs[clean_freqs > threshold]
+    clean_psd = clean_psd[clean_psd > threshold]
+
+    # Ensure shapes match after filtering
+    clean_freqs = clean_freqs[:len(clean_psd)]
+    clean_psd = clean_psd[:len(clean_freqs)]
+    if len(clean_freqs) == 0 or len(clean_psd) == 0:
+        raise ValueError("No valid data points for fitting 1/f model.")
+
+    # Fit the 1/f model
+    try:
+        popt, _ = curve_fit(one_over_f, clean_freqs, clean_psd, bounds=(0, [np.inf, 3]))
+    except ValueError as e:
+        print(f"Error during curve fitting: {e}")
+        raise
+
+    return popt  # A, n
+
 
 # Function to segment the data into three 3-minute segments
 def segment_data(data, fs, condition_name):
@@ -57,18 +96,18 @@ def process_trace(data, fs, trace_type):
     if trace_type == 'base_before':
         processed_data = segment_data(resampled_data, fs,trace_type)['first_3min']  # First 3 minutes
         processed_data = m_a.high_pass_filter(processed_data, fs)
-        #processed_data = m_a.robust_zscore(processed_data)
+        processed_data = m_a.robust_zscore(processed_data)
     elif trace_type == 'opto_drug':
         processed_data = segment_data(resampled_data, fs,trace_type)['first_3min']  # First 3 minutes
         processed_data = m_a.high_pass_filter(processed_data, fs)
-        #processed_data = m_a.robust_zscore(processed_data)
+        processed_data = m_a.robust_zscore(processed_data)
     elif trace_type == 'base_after':
         processed_data = segment_data(resampled_data, fs,trace_type)
         for key in processed_data:
             processed_data[key] = processed_data[key]
             processed_data[key] = m_a.high_pass_filter(processed_data[key], fs)
             #processed_data[key] = m_a.remove_trend_polyfit(processed_data[key])
-            #processed_data[key] = m_a.robust_zscore(processed_data[key])
+            processed_data[key] = m_a.robust_zscore(processed_data[key])
     else:
         processed_data = None
 
@@ -251,7 +290,8 @@ def combine_and_plot_condition(df_vs, df_ds, fs, condition_name):
     plot_segment_analysis(combined_segments_vs, combined_ids_vs, 
                           combined_segments_ds, combined_ids_ds, 
                           fs, f'{condition_name}_combined', 'All Drugs')
-    
+    combined_segments_vs_df=pd.DataFrame(combined_segments_vs)
+    combined_segments_vs_df.to_csv("data/combined_VS_before_spectra.csv")
     # Plot the combined spectra with confidence envelopes
     plot_spectrum_with_confidence_envelopes(combined_segments_vs, None, combined_segments_ds, None, fs, condition_name, "Combined")
 
@@ -333,9 +373,10 @@ def combine_and_plot_spectra_with_envelopes_all_segments(df_vs, df_ds, fs, drug1
             for index, row in df_vs_drug.iterrows():
                 if len(row['base_before']) > 0:
                     processed_data = process_trace(np.array(row['base_before']), fs, 'base_before')
+                    
                     combined_segments_vs_before.append(processed_data)
 
-            # Combine VS data for 'opto_drug' and 'base_after'
+                    # Combine VS data for 'opto_drug' and 'base_after'
             for index, row in df_vs_drug.iterrows():
                 if len(row['opto_drug']) > 0:
                     processed_data = process_trace(np.array(row['opto_drug']), fs, 'opto_drug')
@@ -469,12 +510,19 @@ def plot_individual_spectra_second_segment(df_vs, df_ds, fs, drug1, drug2):
             # Calculate and plot spectra for the second 3-minute segment of 'base_after'
             if combined_segments_vs_after:
                 freqs_vs_after, mean_psd_vs_after, lower_vs_after, upper_vs_after = compute_spectrum_with_confidence(combined_segments_vs_after, fs)
-                ax.plot(freqs_vs_after, mean_psd_vs_after, label=f'{drug} After', color=colors[drug])
+                mean_psd_before_normalized = normalize_curve(mean_psd_vs_after)
+                ax.plot(freqs_vs_after, mean_psd_before_normalized, label=f'{drug} After', color=colors[drug])
                 ax.fill_between(freqs_vs_after, lower_vs_after, upper_vs_after, color=colors[drug], alpha=0.3)
+                A_after_vs, n_after_vs = fit_one_over_f(freqs_vs_after, mean_psd_before_normalized)
+                ax.plot(freqs_vs_after, normalize_curve(one_over_f(freqs_vs_after, A_after_vs, n_after_vs)), label=f'Fit 1/f (A={A_after_vs:.2f}, n={n_after_vs:.2f})', linestyle='--')
+
+
             if combined_segments_vs_before:
                 freqs_vs_before, mean_psd_vs_before, lower_vs_before, upper_vs_before = compute_spectrum_with_confidence(combined_segments_vs_before, fs)
-                ax.plot(freqs_vs_before, mean_psd_vs_before, label=f'{drug} Baseline', color="green")
+                ax.plot(freqs_vs_before, normalize_curve(mean_psd_vs_before), label=f'{drug} Baseline', color="green")
                 ax.fill_between(freqs_vs_before, lower_vs_before, upper_vs_before, color="green", alpha=0.3)
+                A_before, n_before = fit_one_over_f(freqs_vs_before, mean_psd_vs_before)
+                ax.plot(freqs_vs_before, normalize_curve(one_over_f(freqs_vs_before, A_before, 1)), label=f'Fit 1/f (A={A_before:.2f}, n={n_before:.2f})', linestyle='--')
         
         ax.set_title(f'VS Individual {individual} - Second 3min')
         ax.set_xlabel('log(Frequency (Hz))')
@@ -768,7 +816,7 @@ def main(pickle_file_path_vs, pickle_file_path_ds):
     #combine_and_plot_condition(df_vs, df_ds, fs, 'opto_drug')
     
     print("Analyzing combined base_before condition for all drugs...")
-    #combine_and_plot_condition(df_vs, df_ds, fs, 'base_before')
+    combine_and_plot_condition(df_vs, df_ds, fs, 'base_before')
     #print("Analyzing combined conditions for all drugs...")
 
     drug1 = 'Quinpirole'
@@ -776,9 +824,9 @@ def main(pickle_file_path_vs, pickle_file_path_ds):
     #combine_and_plot_spectra_with_envelopes_all_segments(df_vs, df_ds, fs, drug1, drug2)
 
     #plot_pooled_spectra_with_baseline(df_vs, df_ds,fs)
-    combine_and_reduce_spectra(df_vs, df_ds, fs)
+    #combine_and_reduce_spectra(df_vs, df_ds, fs)
 
-    #plot_individual_spectra_second_segment(df_vs, df_ds, fs, drug1, drug2)
+    plot_individual_spectra_second_segment(df_vs, df_ds, fs, drug1, drug2)
 
 # Run the main function
 if __name__ == "__main__":

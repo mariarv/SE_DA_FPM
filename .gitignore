@@ -12,6 +12,7 @@ data/
 *.pptx
 *.png
 .DS_Store
+OASIS
 pyunicorn-0.7.0/CHANGELOG.rst
 pyunicorn-0.7.0/CONTRIBUTIONS.rst
 pyunicorn-0.7.0/LICENSE.txt
