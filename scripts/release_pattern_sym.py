@@ -11,9 +11,13 @@ import os
 
 # Ensure the directory for saving plots exists
 output_dir = "results/plots/firing_patterns"
+data_output_dir = "results/data/firing_patterns"
+
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
+if not os.path.exists(data_output_dir):
+    os.makedirs(data_output_dir)
 # Define the different firing types
 firing_types = [ 'synchronous','asynchronous', 'random']
 
@@ -38,7 +42,7 @@ def plot_raster(spike_trains, dt):
     ax.set_ylabel('Neuron index')
     ax.set_ylim(-0.5, num_neurons - 0.5)
     
-    #plt.show()
+    plt.show()
 
 def plot_calcium_and_spikes(calcium_traces, spike_trains, dt, neuron_idx, start_idx=1000):    
     """
@@ -491,7 +495,7 @@ for tonic_firing_type in firing_types:
 
             # Store the power spectrum from this simulation
             all_power_spectra_sim.append(power_dB_sim)
-
+            plot_raster(all_spike_trains,dt)
         # Convert all simulated power spectra into a numpy array for easier manipulation
         all_power_spectra_sim = np.array(all_power_spectra_sim)
 
