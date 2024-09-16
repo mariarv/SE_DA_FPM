@@ -400,13 +400,13 @@ spikes_per_burst = 15  # Number of spikes per burst
 inter_spike_interval = 0.005  # Interval between spikes within a burst (10 ms)
 tonic_interval_noise = 0.1  # Noise as a percentage of the interval
 time_points = int(total_time / dt)
-switch_prob = 0.5
+switch_prob = 0.1
 jitter = 0.05
 # Create time vector
 time_vector = np.arange(0, total_time, dt)
 
 # Load or define the template waveform for a single spike
-TEMPLATE_FILE_PATH = '/Users/reva/Documents/Python/SE_DA_FPM/data/Templates/Before_Cocaine_VS_mean_traces_dff.csv'
+TEMPLATE_FILE_PATH = '/Users/reva/Documents/Python/SE_DA_FPM/data/Templates/Before_Cocaine_DS_mean_traces_dff.csv'
 template_ = m_a.load_template(TEMPLATE_FILE_PATH, "25")
 template = template_[450:]
 extension = np.full((6000 - len(template),), template[2050])
@@ -421,7 +421,7 @@ fs = 1000
 nperseg = 4096
 noverlap = 3072
 max_freq = 30
-repeats = 30 
+repeats = 10 
 real_data_spectra_path = "data/combined_VS_before_spectra.csv"
 real_data_df = pd.read_csv(real_data_spectra_path, skiprows=1, index_col=0)
 real_spectra = []
@@ -508,14 +508,15 @@ for tonic_firing_type in firing_types:
 
         # Plot individual simulated spectra
         for i, power_dB_sim in enumerate(all_power_spectra_sim):
-            plt.plot(freqs_sim, power_dB_sim, color='blue', alpha=0.3)
+            plt.plot(freqs_sim, power_dB_sim, color='green', alpha=0.3)
 
         # Plot mean of simulated spectra
-        plt.plot(freqs_sim, mean_power_spectrum_sim, color='red', linewidth=2)
+        plt.plot(freqs_sim, mean_power_spectrum_sim, color='green', linewidth=2)
 
         # Compute mean of experimental spectra and plot
-        mean_power_spectrum_exp = np.mean(all_power_spectra_exp, axis=0)
-        plt.plot(freqs_exp, mean_power_spectrum_exp, color='black', linewidth=2)
+        mean_power_spectrum_exp = np.nanmean(all_power_spectra_exp, axis=0)
+        print(mean_power_spectrum_exp)
+        plt.plot(freqs_exp, mean_power_spectrum_exp, color='black', linewidth=4)
 
         # Add labels and title
         plt.title(f'Spectra for Tonic: {tonic_firing_type}, Bursting: {bursting_firing_type}')
