@@ -4,7 +4,7 @@ import pandas as pd
 from scipy.signal import find_peaks
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
-from scipy.stats import skew, kurtosis
+from scipy.stats import skew, kurtosis, lognorm, norm
 import seaborn as sns 
 from scipy.signal import welch, butter, filtfilt, resample
 import pickle
@@ -12,7 +12,8 @@ from scipy.signal import convolve, find_peaks
 from sklearn.metrics import mean_squared_error
 import logging
 import os 
-
+import matplotlib.cm as cm
+import math
 
 def plot_raster(spike_trains, dt, max_time_ms=30000):
     """
@@ -397,6 +398,7 @@ def load_dataframe(pickle_file_path):
 
 # Function to calculate full width at half maximum (FWHM)
 def calculate_fwhm(trace, sampling_rate):
+    trace=trace-np.mean(trace[0:10])
     half_max = np.max(trace) / 2
     indices = np.where(trace >= half_max)[0]
     if len(indices) < 2:
@@ -416,6 +418,7 @@ def calculate_rise_rate(trace, sampling_rate):
 
 # Function to calculate decay rate (from peak to end)
 def calculate_decay_rate(trace, sampling_rate):
+    trace=trace-np.mean(trace[0:10])
     peak_idx = np.argmax(trace)
     decay_rate = (trace[peak_idx] - trace[-1]) / ((len(trace) - peak_idx) / sampling_rate)
     return decay_rate
@@ -537,7 +540,8 @@ def normalize_trace(trace, norm_end_index):
 
 # extract and normalize traces for given conditions
 def get_normalized_traces(df, region_id, duration, start_index, end_index, norm_end_index):
-    region_df = df[(df['region_id'] == region_id) & (df['duration'] == duration)]
+    #region_df = df[(df['region_id'] == region_id) & (df['duration'] == duration)]
+    region_df = df[(df['duration'] == duration)]
     valid_traces = region_df['data'].apply(lambda x: x[start_index:end_index])
     normalized_traces = valid_traces.apply(lambda x: normalize_trace(x, norm_end_index))
     return normalized_traces
@@ -565,8 +569,8 @@ def extract_additional_metrics(traces, sampling_rate):
         'Half-Decay Time': [],
         'Max Slope': [],
         #'Tau': [],
-        'Rise Time': [],
-        'Decay Time': [],
+        #'Rise Time': [],
+        #'Decay Time': [],
         'FDHM': [],
         'Skewness': [],
         'Kurtosis': [],
@@ -576,11 +580,14 @@ def extract_additional_metrics(traces, sampling_rate):
     }
     
     for trace in traces:
+        if isinstance(trace, list): 
+            trace = np.array(trace)
         peak_idx = np.argmax(trace)
         peak_amplitude = trace[peak_idx]
         ttp = peak_idx / sampling_rate
         half_max = peak_amplitude / 2
         above_half_max = np.where(trace >= half_max)[0]
+
         if len(above_half_max) > 1:
             half_decay_time = (above_half_max[-1] - peak_idx) / sampling_rate
             fdhm = (above_half_max[-1] - above_half_max[0]) / sampling_rate
@@ -588,8 +595,9 @@ def extract_additional_metrics(traces, sampling_rate):
             half_decay_time = np.nan
             fdhm = np.nan
         max_slope = np.max(np.diff(trace[:peak_idx -1]) * sampling_rate)
-        rise_time = (np.where(trace >= 0.9 * peak_amplitude)[0][0] - np.where(trace >= 0.1 * peak_amplitude)[0][0]) / sampling_rate
-        decay_time = (np.where(trace <= 0.1 * peak_amplitude)[0][-1] - np.where(trace <= 0.9 * peak_amplitude)[0][-1]) / sampling_rate
+        #rise_time = (np.where(trace >= 0.9 * peak_amplitude)[0][0] - np.where(trace >= 0.1 * peak_amplitude)[0][0]) / sampling_rate
+        below_10_percent, below_90_percent = np.where(trace <= 0.1 * peak_amplitude)[0], np.where(trace <= 0.9 * peak_amplitude)[0]
+        decay_time = (below_10_percent[-1] - below_90_percent[-1]) / sampling_rate if below_10_percent.size > 0 and below_90_percent.size > 0 else math.nan
         #tau = fit_exponential_decay(trace[peak_idx:], sampling_rate)
         trace_skewness = skew(trace)
         trace_kurtosis = kurtosis(trace)
@@ -601,8 +609,8 @@ def extract_additional_metrics(traces, sampling_rate):
         metrics['Half-Decay Time'].append(half_decay_time)
         metrics['Max Slope'].append(max_slope)
         #metrics['Tau'].append(tau)
-        metrics['Rise Time'].append(rise_time)
-        metrics['Decay Time'].append(decay_time)
+        #metrics['Rise Time'].append(rise_time)
+        #metrics['Decay Time'].append(decay_time)
         metrics['FDHM'].append(fdhm)
         metrics['Skewness'].append(trace_skewness)
         metrics['Kurtosis'].append(trace_kurtosis)
@@ -634,8 +642,9 @@ def remove_trend_polyfit(data, degree=2):
 
 def robust_zscore(data):
     median = np.median(data)
+    #mean=np.mean(data)
     iqr = np.percentile(data, 75) - np.percentile(data, 25)
-    return (data - median) / iqr
+    return (data - median)/iqr
 
 def resample_signal(data, original_rate, target_rate):
     num_samples = int(len(data) * (target_rate / original_rate))
@@ -728,3 +737,448 @@ def richardson_lucy(signal, template, iterations=10):
         deconvolved *= convolve(relative_blur, template_flip, 'same')
     
     return deconvolved
+
+
+
+#################### single waveform analysis: 
+
+def extract_waveforms(signal, spike_times, original_rate, pre_spike_ms=400, max_duration_sec=1.2):
+    """
+    Extracts baseline-normalized waveforms from the signal around each detected spike.
+    
+    Parameters:
+    - signal: The original signal array.
+    - spike_times: Indices of detected spikes.
+    - original_rate: The sampling rate of the signal.
+    - pre_spike_ms: Time to capture before the spike in milliseconds.
+    - max_duration_sec: Maximum duration of the waveform after the spike in seconds.
+    
+    Returns:
+    - waveforms: A list of baseline-normalized extracted waveforms.
+    """
+    waveforms = []
+    pre_spike_samples = int(pre_spike_ms / 1000 * original_rate)
+    max_duration_samples = int(max_duration_sec * original_rate)
+    min_distance_samples = int(1.5* original_rate)  # Convert ms to samples
+    
+    # Filter spikes to ensure that no two spikes are closer than min_distance_ms
+    filtered_spike_times = []
+    
+    for i, spike in enumerate(spike_times):
+        if i == 0:
+            # Add the first spike by default
+            filtered_spike_times.append(spike)
+        else:
+            # Check if current spike is far enough from the previous one
+            if spike - filtered_spike_times[-1] >= min_distance_samples:
+                # Check if there is a next spike and if it is far enough from the current one
+                if i < len(spike_times) - 1:
+                    next_spike = spike_times[i + 1]
+                    if next_spike - spike >= min_distance_samples:
+                        filtered_spike_times.append(spike)
+
+
+    for i, spike in enumerate(filtered_spike_times):
+        # Determine end time based on the next spike or the max duration (whichever is smaller)
+        if i < len(filtered_spike_times) - 1:
+            next_spike = filtered_spike_times[i + 1]
+            end_time = min(next_spike - pre_spike_samples, spike + max_duration_samples)
+        else:
+            end_time = min(len(signal), spike + max_duration_samples)
+        
+        # Ensure end_time is valid and extract waveform
+        if end_time > spike:
+            start_time = max(0, spike - pre_spike_samples)
+            waveform = signal[start_time:end_time]
+            normalized_waveform = waveform
+
+            # Baseline normalization: subtract the average of the first 500 ms (pre_spike_samples)
+            baseline = np.nanmean(normalized_waveform[0:0+10])
+            normalized_waveform = normalized_waveform - 0  # Subtract baseline to bring the start to 0
+            if len(normalized_waveform)>int(0.8 * original_rate): 
+                waveforms.append(normalized_waveform)
+    
+    return waveforms
+
+def extract_valid_trace(trace, sampling_rate):
+    # Find the index of the peak in the trace
+    peak_index = np.argmax(trace)  # Adjust if using different peak-finding logic
+    
+    # Calculate the start and end indices
+    start_index = max(peak_index - int(0.4 * sampling_rate), 0)  # Ensure start_index is not negative
+    end_index = min(start_index + int(2.6 * sampling_rate), len(trace))  # Ensure end_index is within trace length
+    
+    # Extract the valid portion of the trace (1 second window)
+    valid_trace = trace[start_index:end_index]
+    
+    return valid_trace
+
+def calculate_spike_statistics(waveforms, original_rate):
+    """
+    Calculate statistics such as amplitude, decay rates, and widths for the spikes.
+    
+    Parameters:
+    - waveforms: A list of extracted waveforms.
+    - original_rate: The sampling rate of the signal.
+    
+    Returns:
+    - stats: A dictionary with spike statistics (amplitude, decay rate, width).
+    """
+    amplitudes = []
+    decay_rates = []
+    widths = []
+    
+    for waveform in waveforms:
+        # Amplitude is the max value of the waveform
+        amplitude = np.max(waveform)
+        amplitudes.append(amplitude)
+        
+        # Decay rate: estimate using the peak and the decay slope after peak
+        peak_index = np.argmax(waveform)
+        if len(waveform) > peak_index + 1:
+            decay_slope = -(waveform[peak_index] - waveform[-1]) / (len(waveform) - peak_index)
+        else:
+            decay_slope = 0
+        decay_rates.append(decay_slope)
+        
+        # Width: Full Width at Half Maximum (FWHM)
+        half_amplitude = amplitude / 2
+        left_idx = np.where(waveform[:peak_index] <= half_amplitude)[0]
+        right_idx = np.where(waveform[peak_index:] <= half_amplitude)[0]
+        if len(left_idx) > 0 and len(right_idx) > 0:
+            width = (right_idx[0] + peak_index) - left_idx[-1]
+        else:
+            width = 0
+        widths.append(width / original_rate)  # Convert to seconds
+    
+    stats = {
+        'amplitude': amplitudes,
+        'decay_rate': decay_rates,
+        'width': widths
+    }
+    
+    return stats
+
+def plot_waveforms(waveforms, original_rate):
+    """
+    Plot all baseline-normalized waveforms in one plot to visualize their shapes.
+    
+    Parameters:
+    - waveforms: A list of extracted and baseline-normalized waveforms.
+    - original_rate: The sampling rate of the signal.
+    """
+    plt.figure(figsize=(10, 6))
+    for i, waveform in enumerate(waveforms):
+        time_vector = np.arange(len(waveform)) / original_rate
+        plt.plot(time_vector, waveform, label=f'Waveform {i + 1}', alpha=0.5)
+    
+    plt.xlabel('Time (s)')
+    plt.ylabel('Normalized Amplitude')
+    plt.title('Extracted Baseline-Normalized Spike Waveforms')
+    plt.show()
+
+def plot_spike_statistics(stats):
+    """
+    Plot swarm plots for spike statistics: amplitude, decay rates, and widths.
+    
+    Parameters:
+    - stats: A dictionary with spike statistics (amplitude, decay rate, width).
+    """
+    plt.figure(figsize=(18, 6))
+    
+    # Amplitude
+    plt.subplot(1, 3, 1)
+    sns.swarmplot(data=stats['amplitude'], color='blue')
+    plt.title('Spike Amplitudes')
+    plt.ylabel('Amplitude')
+
+    # Decay Rates
+    plt.subplot(1, 3, 2)
+    sns.swarmplot(data=stats['decay_rate'], color='green')
+    plt.title('Spike Decay Rates')
+    plt.ylabel('Decay Rate')
+
+    # Widths
+    plt.subplot(1, 3, 3)
+    sns.swarmplot(data=stats['width'], color='red')
+    plt.title('Spike Widths (FWHM)')
+    plt.ylabel('Width (s)')
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_waveforms_with_color(waveforms, widths, original_rate):
+    """
+    Plot all baseline-normalized waveforms, color-coded based on their width.
+    
+    Parameters:
+    - waveforms: A list of extracted and baseline-normalized waveforms.
+    - widths: A list of widths (FWHM) for each waveform.
+    - original_rate: The sampling rate of the signal.
+    """
+    # Normalize widths to a range [0, 1] to map them to a colormap
+    normalized_widths = (widths - np.min(widths)) / (np.max(widths) - np.min(widths))
+    
+    # Define a colormap (e.g., from light blue to dark blue)
+    colormap = plt.get_cmap('cool')
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    for i, waveform in enumerate(waveforms):
+        time_vector = np.arange(len(waveform)) / original_rate
+        color = colormap(normalized_widths[i])  # Assign color based on width
+        plt.plot(time_vector, waveform, color=color, label=f'Waveform {i + 1}', alpha=0.7)
+    
+    plt.xlabel('Time (s)')
+    plt.ylabel('Normalized Amplitude')
+    plt.title('Extracted Baseline-Normalized Spike Waveforms (Color-coded by Width)')
+    
+    # Create a colorbar to show the mapping from width to color
+    sm = plt.cm.ScalarMappable(cmap=colormap, norm=plt.Normalize(vmin=np.min(widths), vmax=np.max(widths)))
+    sm.set_array([])  # Only needed for the colorbar
+    cbar = fig.colorbar(sm, ax=ax)  # Link the colorbar to the current axis
+    cbar.set_label('Spike Width (s)', rotation=270, labelpad=15)
+    
+    plt.show()
+
+
+def calculate_spike_statistics_with_next_spike(waveforms, spike_times, original_rate):
+    """
+    Calculate statistics such as amplitude, decay rates, widths, and time to next spike for the spikes.
+    
+    Parameters:
+    - waveforms: A list of extracted waveforms.
+    - spike_times: A list of spike times.
+    - original_rate: The sampling rate of the signal.
+    
+    Returns:
+    - stats: A dictionary with spike statistics (amplitude, decay rate, width, time to next spike).
+    """
+    amplitudes = []
+    decay_rates = []
+    widths = []
+    time_to_next_spike = []
+
+    for i, waveform in enumerate(waveforms):
+        # Amplitude is the max value of the waveform
+        amplitude = np.max(waveform)
+        amplitudes.append(amplitude)
+        
+        # Decay rate: estimate using the peak and the decay slope after peak
+        peak_index = np.argmax(waveform)
+        if len(waveform) > peak_index + 1:
+            decay_slope = -(waveform[peak_index] - waveform[-1]) / (len(waveform) - peak_index)
+        else:
+            decay_slope = 0
+        decay_rates.append(decay_slope)
+        
+        # Width: Full Width at Half Maximum (FWHM)
+        half_amplitude = amplitude / 2
+        left_idx = np.where(waveform[:peak_index] <= half_amplitude)[0]
+        right_idx = np.where(waveform[peak_index:] <= half_amplitude)[0]
+        if len(left_idx) > 0 and len(right_idx) > 0:
+            width = (right_idx[0] + peak_index) - left_idx[-1]
+        else:
+            width = 0
+        widths.append(width / original_rate)  # Convert to seconds
+
+        # Time to next spike
+        if i < len(spike_times) - 1:
+            next_spike_time = spike_times[i + 1]
+            time_diff = (next_spike_time - spike_times[i]) / original_rate  # Time in seconds
+        else:
+            time_diff = None  # No next spike
+        time_to_next_spike.append(time_diff)
+    
+    stats = {
+        'amplitude': amplitudes,
+        'decay_rate': decay_rates,
+        'width': widths,
+        'time_to_next_spike': time_to_next_spike
+    }
+    
+    return stats
+
+def plot_time_to_next_spike_vs_amplitude(stats):
+    """
+    Plot time to next spike vs amplitude of spike.
+    
+    Parameters:
+    - stats: A dictionary containing spike statistics, including time to next spike and amplitude.
+    """
+    time_to_next_spike = np.array(stats['time_to_next_spike'])
+    amplitudes = np.array(stats['amplitude'])
+    
+    # Filter out None values from time_to_next_spike
+    valid_indices = np.where(time_to_next_spike != None)[0]
+    valid_time_to_next_spike = time_to_next_spike[valid_indices]
+    valid_amplitudes = amplitudes[valid_indices]
+
+    plt.figure(figsize=(8, 6))
+    plt.scatter(valid_amplitudes, valid_time_to_next_spike, c='blue', alpha=0.7)
+    plt.xlabel('Spike Amplitude')
+    plt.ylabel('Time to Next Spike (s)')
+    plt.title('Time to Next Spike vs Spike Amplitude')
+    plt.show()
+
+def plot_raster(spike_trains, dt):
+    """
+    spike_trains: A 2D numpy array where each row represents the spike train of a neuron.
+                  Each element is binary (1 for spike, 0 for no spike) or a list of spike timestamps.
+    dt: Time step used for the simulation in ms or time units.
+    """
+    num_neurons = len(spike_trains)
+    
+    # Create a new figure for the raster plot
+    fig, ax = plt.subplots(figsize=(10, 8))
+
+    # Loop over each neuron and plot its spike times
+    for neuron_idx, spike_train in enumerate(spike_trains):
+        spike_times = np.where(spike_train > 0)[0] * dt  # Extract spike times based on non-zero entries
+        ax.scatter(spike_times, np.ones_like(spike_times) * neuron_idx, s=2, color="black")
+
+    ax.set_title('Raster Plot of Neuronal Spiking Activity')
+    ax.set_xlabel('Time (ms)')
+    ax.set_ylabel('Neuron index')
+    ax.set_ylim(-0.5, num_neurons - 0.5)
+######################################################################################################
+#custom peak search 
+
+def find_local_minima(signal):
+    inverted_signal = -signal  # Invert the signal to use find_peaks
+    minima, _ = find_peaks(inverted_signal)
+    return minima
+
+
+def custom_peak_prominence(signal, peaks, local_minima):
+    """
+    Manually calculate the prominence of peaks based on the nearest valleys (local minima).
+    
+    Parameters:
+    - signal: 1D numpy array of the input signal.
+    - peaks: Indices of detected peaks.
+    - local_minima: Indices of local minima.
+    
+    Returns:
+    - prominences: Calculated prominences for each peak.
+    """
+    prominences = []
+    
+    for peak in peaks:
+        # Find the nearest local minima to the left and right of the peak
+        pre_minima = local_minima[local_minima < peak]
+        post_minima = local_minima[local_minima > peak]
+        
+        # Get the nearest local minima
+        if len(pre_minima) > 0:
+            nearest_pre_minima = pre_minima[-1]
+        else:
+            nearest_pre_minima = 0  # Start of the signal
+        
+        if len(post_minima) > 0:
+            nearest_post_minima = post_minima[0]
+        else:
+            nearest_post_minima = len(signal) - 1  # End of the signal
+        
+        # Calculate prominence: peak height minus the higher of the two minima
+        min_valley = min(signal[nearest_pre_minima], signal[nearest_post_minima])
+        prominence = signal[peak] - min_valley
+        prominences.append(prominence)
+    
+    return np.array(prominences)
+
+def custom_peak_search(signal, min_prominence=0.5, min_distance=100):
+    """
+    Custom peak search based on prominence and distance between peaks.
+    
+    Parameters:
+    - signal: The input signal (1D array).
+    - min_prominence: Minimum prominence for a peak to be considered significant.
+    - min_distance: Minimum distance between two peaks to consider them separate.
+    
+    Returns:
+    - final_peaks: The indices of the final detected peaks.
+    - final_prominences: The prominences of the final peaks.
+    """
+    # Step 1: Use find_peaks to detect preliminary peaks
+    preliminary_peaks, _ = find_peaks(signal, distance=min_distance)
+    local_minima = find_local_minima(signal)
+
+    # Step 2: Calculate prominences of these preliminary peaks
+    prominences = custom_peak_prominence(signal, preliminary_peaks,local_minima)
+    # Step 4: Filter peaks based on minimum prominence threshold
+    final_peaks = preliminary_peaks[prominences >= min_prominence]
+    final_prominences = prominences[prominences >= min_prominence]
+    
+    return np.array(final_peaks), np.array(final_prominences)
+
+def scale_to_match_combined(normalized_combined_pdf, scaled_component_pdf, burst_isis,x_values, region='burst'):
+    if region == 'burst':
+        component_peak_index = np.argmax(scaled_component_pdf[x_values < 0.05])  # Burst peak index
+    else:
+        component_peak_index = np.argmax(scaled_component_pdf[x_values >=  np.median(burst_isis)])  # Tonic peak index
+
+    component_peak_value = scaled_component_pdf[component_peak_index]
+    combined_peak_value = normalized_combined_pdf[component_peak_index]
+    scaling_factor = combined_peak_value / component_peak_value if component_peak_value > 0 else 1.0
+    scaled_component_pdf = scaled_component_pdf * scaling_factor
+    return scaled_component_pdf
+
+# Function to extract parameters and combined distribution for each cell
+def extract_combined_distribution_for_cell(neuron_isis, x_values):
+    burst_isis = neuron_isis[neuron_isis < 0.05]
+    tonic_isis = neuron_isis[neuron_isis >= np.median(burst_isis)]
+
+    burst_shape, _, burst_scale = lognorm.fit(burst_isis, floc=0)
+    tonic_mean,loc, tonic_std = lognorm.fit(tonic_isis)
+
+    burst_pdf = lognorm.pdf(x_values, burst_shape, 0, burst_scale)
+    tonic_pdf = lognorm.pdf(x_values, tonic_mean,loc, tonic_std)
+
+    scaled_burst_pdf = burst_pdf.copy()
+    scaled_tonic_pdf = tonic_pdf.copy()
+
+    combined_pdf = scaled_burst_pdf + scaled_tonic_pdf
+    normalized_combined_pdf = combined_pdf / np.trapz(combined_pdf, x_values)  # Normalize combined PDF
+
+    # Scale the burst and tonic components to match the combined PDF
+    scaled_burst_pdf_matched = scale_to_match_combined(normalized_combined_pdf, scaled_burst_pdf,burst_isis, x_values, region='burst')
+    scaled_tonic_pdf_matched = scale_to_match_combined(normalized_combined_pdf, scaled_tonic_pdf, burst_isis,x_values, region='tonic')
+
+    # Return the normalized combined PDF and the individual components
+    return normalized_combined_pdf, scaled_burst_pdf_matched, scaled_tonic_pdf_matched
+
+# Function to sample ISIs from a given PDF
+def sample_spiking_for_duration(pdf, x_values, duration=60):
+    """
+    Samples inter-spike intervals (ISIs) based on the provided PDF until the total time reaches the specified duration.
+    Args:
+        pdf (np.array): The probability density function to sample from.
+        x_values (np.array): The x-axis values corresponding to the PDF.
+        duration (float): The desired duration in seconds.
+
+    Returns:
+        spike_times (np.array): Array of cumulative spike times up to the specified duration.
+    """
+    pdf_normalized = pdf / np.sum(pdf)  # Normalize the PDF to get a proper probability distribution
+    spike_times = []  # List to accumulate spike times
+    total_time = 0  # Track the cumulative time
+
+    while total_time < duration:
+        # Sample a single ISI based on the PDF
+        sampled_isi_index = np.random.choice(len(x_values), p=pdf_normalized)
+        sampled_isi = x_values[sampled_isi_index]
+
+        # Update cumulative time and add the spike time
+        total_time += sampled_isi
+        if total_time <= duration:  # Only add the spike if it does not exceed the duration
+            spike_times.append(total_time)
+
+    return np.array(spike_times)
+def create_hankel_matrix(signal, window_size):
+    return hankel(signal[:window_size], signal[window_size-200:])
+
+def create_sliding_windows(signal, window_size, step_size):
+    num_windows = (len(signal) - window_size) // step_size + 1
+    return np.array([signal[i*step_size : i*step_size + window_size] for i in range(num_windows)])

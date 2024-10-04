@@ -8,22 +8,32 @@ from metrics_analysis import extract_metrics, perform_statistical_tests, plot_me
 from sklearn.manifold import TSNE
 import umap
 # Read the DataFrame from the pickle file
-pickle_filename = 'data/df_opto_combined.pkl'
+pickle_filename = 'data/df_opto_combined_from.pkl'
 df = pd.read_pickle(pickle_filename)
 
 # Filter the DataFrame based on 'session_id'
-filtered_df_coc= df[df['session_id'].isin([[3]])]
-filtered_df_cont= df[df['session_id'].isin([[1],[2]])]
+#filtered_df_coc= df[df['session_id'].isin([[3]])]
+#filtered_df_cont= df[df['session_id'].isin([[1],[2]])]
+#filtered_df_coc['duration'] = filtered_df_coc['duration'].apply(lambda x: x[0])
+#filtered_df_coc.reset_index(drop=True, inplace=True)
+#filtered_df_cont['duration'] = filtered_df_cont['duration'].apply(lambda x: x[0])
+#filtered_df_cont.reset_index(drop=True, inplace=True)
+
+filtered_df_saline= df[df['session']=="Saline"]
+filtered_df_coc= df[df['session']=="Cocaine"]
+filtered_df_fent= df[df['session']=="Fentanyl"]
+
 filtered_df_coc['duration'] = filtered_df_coc['duration'].apply(lambda x: x[0])
 filtered_df_coc.reset_index(drop=True, inplace=True)
-filtered_df_cont['duration'] = filtered_df_cont['duration'].apply(lambda x: x[0])
-filtered_df_cont.reset_index(drop=True, inplace=True)
-
+filtered_df_saline['duration'] = filtered_df_saline['duration'].apply(lambda x: x[0])
+filtered_df_saline.reset_index(drop=True, inplace=True)
+filtered_df_fent['duration'] = filtered_df_fent['duration'].apply(lambda x: x[0])
+filtered_df_fent.reset_index(drop=True, inplace=True)
 
 # Define the durations and corresponding colors for 'region_id'
 region_colors = {
     'DS': 'blue',
-    'VS': 'green'
+    '07': 'green'
 }
 
 sampling_rate = 1.017252624511719e+03
@@ -36,14 +46,15 @@ norm_end_index = int(norm_end_time * sampling_rate)
 time_vector = np.linspace(start_time, end_time, end_index - start_index)
 # Create a figure with 4 subplots
 # Compare VS vs DS for each filtered DataFrame
-durations = [25, 50, 100, 250, 1000]
-mean_traces_dict = {'Before_Cocaine': {'DS': {}, 'VS': {}}, 'After_Cocaine': {'DS': {}, 'VS': {}}}
+durations = [1, 5,10, 25, 50, 100, 250, 1000]
+#mean_traces_dict = {'Before_Cocaine': {'DS': {}, 'VS': {}}, 'After_Cocaine': {'DS': {}, 'VS': {}}}
+mean_traces_dict = {'Saline': {}, 'Cocaine': {}, 'Fentanyl': {} }
 
 # Create a figure with 2 subplots for each filtered DataFrame
-fig, axes = plt.subplots(2, len(durations), figsize=(20, 10))
+fig, axes = plt.subplots(3, len(durations), figsize=(20, 10))
 
 for i, duration in enumerate(durations):
-    for j, (filtered_df, label) in enumerate(zip([filtered_df_cont, filtered_df_coc], ['Before_Cocaine', 'After_Cocaine'])):
+    for j, (filtered_df, label) in enumerate(zip([filtered_df_saline, filtered_df_coc,filtered_df_fent], ['Saline', 'Cocaine',"Fentanyl"])):
         axes[j, i].set_title(f'{label} - {duration} ms')
         for region_id, color in region_colors.items():
             normalized_traces = get_normalized_traces(filtered_df, region_id, duration, start_index, end_index, norm_end_index)
@@ -53,28 +64,29 @@ for i, duration in enumerate(durations):
                 for k, trace_n in enumerate(normalized_traces):
                     axes[j, i].plot(time_vector, trace_n, color=color, alpha=.1)
                 
-                mean_traces_dict[label][region_id][duration] = mean_trace
-
+                #mean_traces_dict[label][region_id][duration] = mean_trace
+                mean_traces_dict[label][duration] = mean_trace
         if i == 0:
             axes[j, i].set_ylabel('z-score')
-            axes[j, i].legend()
-        axes[j, i].set_ylim([-40, 320])
+            #axes[j, i].legend()
+        #axes[j, i].set_ylim([-40, 320])
         axes[j, i].set_xlabel('Time (s)')
 
 # Adjust layout
 plt.tight_layout()
+plt.show()
 file_path="data/"
 for label in mean_traces_dict:
-    for region_id in mean_traces_dict[label]:
-        mean_traces_df = pd.DataFrame(mean_traces_dict[label][region_id])
-        filename = f'{label}_{region_id}_mean_traces_dff.csv'
-        mean_traces_df.to_csv(filename, index=False)
-        print(f'Saved {filename}')
+    #for region_id in mean_traces_dict[label]:
+    mean_traces_df = pd.DataFrame(mean_traces_dict[label])
+    filename = f'{label}_VS_mean_traces_dff_new.csv'
+    mean_traces_df.to_csv(filename, index=False)
+    print(f'Saved {filename}')
 # Show the plot
 #plt.savefig("results/plots/traces_opto_VS_DS_zscore.pdf")
 
 sampling_rate = 1.017252624511719e+03
-durations = [25, 50, 100, 250, 1000]
+durations = [1,5,10, 25, 50, 100, 250, 1000]
 regions = ['DS', 'VS']
 metrics = ['FWHM', 'Peak Amplitude', 'Rise Rate', 'Decay Rate', 'AUC',      
         'Half-Decay Time',
@@ -87,11 +99,11 @@ metrics = ['FWHM', 'Peak Amplitude', 'Rise Rate', 'Decay Rate', 'AUC',
         'Baseline Drift',
         'Noise Level',
         'Peak-to-Baseline Ratio']
-colors = {'DS': 'blue', 'VS': 'green'}
+#colors = {'DS': 'blue', 'VS': 'green'}
 
 # Extract metrics for each condition
-urations = [25, 50, 100, 250, 1000]
-regions = ['DS', 'VS']
+durations = [1,5,10, 25, 50, 100, 250, 1000]
+#regions = ['DS', '07']
 # Extract metrics for each condition
 data = []
 metric_data_list = []  # To store metrics for each trace
@@ -99,7 +111,7 @@ filtered_indices = []  # To store indices of traces for each duration and region
 
 for duration in durations:
     for region in regions:
-        for filtered_df, session_label in zip([filtered_df_coc, filtered_df_cont], ['After_Cocaine', 'Before_Cocaine']):
+        for filtered_df, session_label in zip([filtered_df_saline, filtered_df_coc, filtered_df_cont], ['After_Cocaine', 'Before_Cocaine']):
             df_region = filtered_df[(filtered_df['duration'] == duration) & (filtered_df['region_id'] == region)]
             if not df_region.empty:
                 valid_traces = df_region['data'].apply(lambda x: x[start_index:end_index])

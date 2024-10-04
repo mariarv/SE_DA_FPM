@@ -53,19 +53,19 @@ grouped_signals_after = df
 signals_before = []
 signals_after = []
 
-window_size = 5000  # Window size for the sliding window
-step_size = 200    # Step size for the sliding window
+window_size = 20000  # Window size for the sliding window
+step_size = 250    # Step size for the sliding window
 combined_segments_vs_before = []
 combined_segments_vs_after= []
 for (signal_idx_before, row_before), (signal_idx_after, row_after) in zip(grouped_signals_before.iterrows(), grouped_signals_after.iterrows()):
     signal_before = resample_signal(row_before['base_before'], ORIGINAL_RATE, target_fs)
     signal_after = resample_signal(row_after['base_after'], ORIGINAL_RATE, target_fs)
-    signal_after_=signal_after[4 * 60*target_fs : 6 * 60*target_fs]
-    signal_before_=signal_before[ 60*target_fs: 3* 60*target_fs]
+    signal_after=signal_after[7 * 60*target_fs : 9 * 60*target_fs]
+    signal_before=signal_before[ 0 : 2* 60*target_fs ]
 
     # normalisations
-    signal_after= m_a.robust_zscore(signal_after_)
-    signal_before = m_a.robust_zscore(signal_before_)
+    #signal_after= m_a.robust_zscore(signal_after_)
+    #signal_before = m_a.robust_zscore(signal_before_)
     n_rows = 2000  # Number of rows in Hankel matrix
 
     #t_span = (0, 50)
@@ -82,126 +82,128 @@ for (signal_idx_before, row_before), (signal_idx_after, row_after) in zip(groupe
     #ignal_after = np.sin(2 * np.pi * 0.001 * time_points)
     #signal_after = st[::200]
   # Cumulative sum to create a random walk
-    combined_segments_vs_before.append(signal_before)
-    combined_segments_vs_after.append(signal_after)
+
     drug=df["drug"][signal_idx_before]
     ind=df["file"][signal_idx_before]
 
     print(drug)
     print(ind)
 
-    
-    H_before = create_sliding_windows(signal_before, window_size, step_size)
-    H_after = create_sliding_windows(signal_after, window_size, step_size)
+    if drug == "Cocaine": 
+        H_before = create_sliding_windows(signal_before, window_size, step_size)
+        H_after = create_sliding_windows(signal_after, window_size, step_size)
 
-    H_before_flat = H_before.reshape(-1, H_before.shape[1])
-    H_after_flat = H_after.reshape(-1, H_after.shape[1])
-    #time_indices_b = np.arange(len(chaotic_signal)).reshape(-1, 1)
-    #time_indices_a = np.arange(len(signal_after)).reshape(-1, 1)
-    #signal_before_reshaped = np.hstack((time_indices_b, chaotic_signal.reshape(-1, 1)))
-    #signal_after_reshaped = np.hstack((time_indices_a, signal_after.reshape(-1, 1)))
-    drug=df["drug"][signal_idx_before]
-    ind=df["file"][signal_idx_before]
+        H_before_flat = H_before.reshape(-1, H_before.shape[1])
+        H_after_flat = H_after.reshape(-1, H_after.shape[1])
+        #time_indices_b = np.arange(len(chaotic_signal)).reshape(-1, 1)
+        #time_indices_a = np.arange(len(signal_after)).reshape(-1, 1)
+        #signal_before_reshaped = np.hstack((time_indices_b, chaotic_signal.reshape(-1, 1)))
+        #signal_after_reshaped = np.hstack((time_indices_a, signal_after.reshape(-1, 1)))
+        combined_segments_vs_before.append(signal_before)
+        combined_segments_vs_after.append(signal_after)
 
+        # Apply t-SNE on the Hankel matrices with 3 components
+        #reducer = umap.UMAP(n_components=3, random_state=42)
+    # pca =PCA(n_components=3)
+    # umap_before = pca.fit_transform(H_before_flat)
+    # umap_after = pca.fit_transform(H_after_flat)
+    # umap_before = reducer.fit_transform(H_before_flat)
+        #umap_after = reducer.fit_transform(H_after_flat)
+        U, S, Vt = np.linalg.svd(H_before_flat, full_matrices=False)
 
-    # Apply t-SNE on the Hankel matrices with 3 components
-    #reducer = umap.UMAP(n_components=3, random_state=42)
-   # pca =PCA(n_components=3)
-   # umap_before = pca.fit_transform(H_before_flat)
-   # umap_after = pca.fit_transform(H_after_flat)
-   # umap_before = reducer.fit_transform(H_before_flat)
-    #umap_after = reducer.fit_transform(H_after_flat)
-    U, S, Vt = np.linalg.svd(H_before_flat, full_matrices=False)
+    # U contains the spatial modes (eigenvectors)
+    # S contains the singular values
+    # Vt contains the temporal coefficients (time evolution of each mode)
 
-# U contains the spatial modes (eigenvectors)
-# S contains the singular values
-# Vt contains the temporal coefficients (time evolution of each mode)
+    # To reconstruct the data using the first few POD modes:
+        num_modes = 3  # Number of modes to retain
+        umap_before = U
+        U_, S_, Vt_ = np.linalg.svd(H_after_flat, full_matrices=False)
+        umap_after = U_
 
-# To reconstruct the data using the first few POD modes:
-    num_modes = 3  # Number of modes to retain
-    umap_before = U
-    U_, S_, Vt_ = np.linalg.svd(H_after_flat, full_matrices=False)
-    umap_after = U_
-
-    fig = plt.figure(figsize=(14, 12))
-    
-    # Create 3D subplots for before and after
-    ax_before = fig.add_subplot(2, 2, 3, projection='3d')
-    ax_after = fig.add_subplot(2, 2, 4, projection='3d')
-    
-    # Plot the t-SNE results for before
-    ax_before.plot(umap_before[:, 0], umap_before[:, 1], umap_before[:, 2],  marker='o', markersize=1, linestyle='-', color='blue')
-    ax_before.set_title(f'PCT Before Signal for {drug}')
-    ax_before.set_xlabel('PCT 1')
-    ax_before.set_ylabel('PCT 2')
-    ax_before.set_zlabel('PCT 3')
-    
-    # Plot the t-SNE results for after
-    ax_after.plot(umap_after[:, 0], umap_after[:, 1], umap_after[:, 2], marker='o', markersize=1, linestyle='-', color='red')
-    ax_after.set_title(f'PCT After Signal {drug}')
-    ax_after.set_xlabel('PCT 1')
-    ax_after.set_ylabel('PCT 2')
-    ax_after.set_zlabel('PCT 3')
-
-
-    ax_time_before = fig.add_subplot(2, 2, 1)
-    ax_time_after = fig.add_subplot(2, 2, 2)
-    
-    ax_time_before.plot(time_points, signal_before_, color='blue')
-    ax_time_before.set_title(f'Time Series Before Signal for {drug}')
-    ax_time_before.set_xlabel('Time')
-    ax_time_before.set_ylabel('Amplitude')
-    
-    ax_time_after.plot(time_points, signal_after_, color='red')
-    ax_time_after.set_title(f'Time Series of After Signal for {drug}')
-    ax_time_after.set_xlabel('Time')
-    ax_time_after.set_ylabel('Amplitude')
-    
-    plt.tight_layout()
-    plt.savefig(f'results/plots/POD_plots/VS_POD_{ind[:9]}_{drug}.pdf')
-    plt.show()
-    """
-    v_before = np.gradient(signal_before, time_points)
-    v_after = np.gradient(signal_after, time_points)
-    
-    fig = plt.figure(figsize=(14, 12))
-    
-    # Create 3D subplots for before and after
-    ax_before = fig.add_subplot(2, 2, 3)
-    ax_after = fig.add_subplot(2, 2, 4)
-    
-    # Plot the t-SNE results for before
-    ax_before.plot(signal_before, v_before,  marker='o', markersize=1, linestyle='-', color='blue')
-    ax_before.set_title(f'Phase plot Before Signal for {drug}')
+        fig = plt.figure(figsize=(10, 10))
+        
+        # Create 3D subplots for before and after
+        ax_before = fig.add_subplot(2, 2, 3, projection='3d')
+        ax_after = fig.add_subplot(2, 2, 4, projection='3d')
+        
+        # Plot the t-SNE results for before
+        ax_before.plot(umap_before[:, 0], umap_before[:, 1], umap_before[:, 2],  marker='o', markersize=1, linestyle='-', color='blue')
+        ax_before.set_title(f'PCT Before Signal for {drug}')
+        ax_before.set_xlabel('PCT 1')
+        ax_before.set_ylabel('PCT 2')
+        ax_before.set_zlabel('PCT 3')
+        
+        # Plot the t-SNE results for after
+        ax_after.plot(umap_after[:, 0], umap_after[:, 1], umap_after[:, 2], marker='o', markersize=1, linestyle='-', color='red')
+        ax_after.set_title(f'PCT After Signal {drug}')
+        ax_after.set_xlabel('PCT 1')
+        ax_after.set_ylabel('PCT 2')
+        ax_after.set_zlabel('PCT 3')
 
 
+        ax_time_before = fig.add_subplot(2, 2, 1)
+        ax_time_after = fig.add_subplot(2, 2, 2)
+        
+        ax_time_before.plot(time_points, signal_before, color='blue')
+        ax_time_before.set_title(f'Time Series Before Signal for {drug}')
+        ax_time_before.set_xlabel('Time')
+        ax_time_before.set_ylabel('Amplitude')
+        
+        ax_time_after.plot(time_points, signal_after, color='red')
+        ax_time_after.set_title(f'Time Series of After Signal for {drug}')
+        ax_time_after.set_xlabel('Time')
+        ax_time_after.set_ylabel('Amplitude')
+        
+        plt.tight_layout()
+        plt.savefig(f'results/plots/POD_plots/VS_POD_{ind[:9]}_{drug}.pdf')
+        plt.show()
     
-    # Plot the t-SNE results for after
-    ax_after.plot(signal_after, v_before,  marker='o', markersize=1, linestyle='-', color='red')
-    ax_after.set_title(f'Phase plot After Signal {drug}')
+        v_before = np.gradient(signal_before, time_points)
+        v_after = np.gradient(signal_after, time_points)
+        
+        fig = plt.figure(figsize=(14, 12))
+        
+        # Create 3D subplots for before and after
+        ax_before = fig.add_subplot(2, 2, 3)
+        ax_after = fig.add_subplot(2, 2, 4)
+        
+        # Plot the t-SNE results for before
+        ax_before.plot(signal_before, v_before,  marker='o', markersize=1, linestyle='-', color='blue')
+        ax_before.set_title(f'Phase plot Before Signal for {drug}')
 
 
-    ax_time_before = fig.add_subplot(2, 2, 1)
-    ax_time_after = fig.add_subplot(2, 2, 2)
+        
+        # Plot the t-SNE results for after
+        ax_after.plot(signal_after, v_before,  marker='o', markersize=1, linestyle='-', color='red')
+        ax_after.set_title(f'Phase plot After Signal {drug}')
+
+
+        ax_time_before = fig.add_subplot(2, 2, 1)
+        ax_time_after = fig.add_subplot(2, 2, 2)
+        
+        ax_time_before.plot(time_points, signal_before, color='blue')
+        ax_time_before.set_title(f'Time Series Before Signal for {drug}')
+        ax_time_before.set_xlabel('Time')
+        ax_time_before.set_ylabel('Amplitude')
+        
+        ax_time_after.plot(time_points, signal_after, color='red')
+        ax_time_after.set_title(f'Time Series of After Signal for {drug}')
+        ax_time_after.set_xlabel('Time')
+        ax_time_after.set_ylabel('Amplitude')
+        
+        plt.tight_layout()
+        plt.savefig(f'results/plots/phase_plots/VS_Phase_plot_{ind[:9]}_{drug}.pdf')
     
-    ax_time_before.plot(time_points, signal_before, color='blue')
-    ax_time_before.set_title(f'Time Series Before Signal for {drug}')
-    ax_time_before.set_xlabel('Time')
-    ax_time_before.set_ylabel('Amplitude')
     
-    ax_time_after.plot(time_points, signal_after, color='red')
-    ax_time_after.set_title(f'Time Series of After Signal for {drug}')
-    ax_time_after.set_xlabel('Time')
-    ax_time_after.set_ylabel('Amplitude')
-    
-    plt.tight_layout()
-    plt.savefig(f'results/plots/phase_plots/VS_Phase_plot_ZRob_{ind[:9]}_{drug}.pdf')
-    """
-    
-combined_segments_df = pd.DataFrame(combined_segments_vs_after[10:15])
+combined_segments_df = pd.DataFrame(combined_segments_vs_after)
 print(combined_segments_df.shape)
 combined_segments_df.to_csv('combined_segments_vs_after.csv',  index=False, chunksize=1000)
 df_read = pd.read_csv('combined_segments_vs_after.csv')
+
+combined_segments_df_before= pd.DataFrame(combined_segments_vs_before)
+print(combined_segments_df_before.shape)
+combined_segments_df_before.to_csv('combined_segments_vs_before.csv',  index=False, chunksize=1000)
 
 # Displaying the shape of the DataFrame that was read
 print(df_read.shape)

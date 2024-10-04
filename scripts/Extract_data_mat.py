@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import pickle
 
-file_path = 'data/Matlab_files/single_stimulation_maria.mat'
+file_path = '/Volumes/T7/optostimulation.mat'
 
 mat_data = h5py.File(file_path, 'r')
 
@@ -63,11 +63,13 @@ def preprocess_data_dict(data_dict, file):
         data_dict['subject_id'] = extract_string_data(data_dict['subject_id'], file)
     if 'region_id' in data_dict:
         data_dict['region_id'] = extract_string_data(data_dict['region_id'], file)
+    if 'region_id' in data_dict:
+        data_dict['session'] = extract_string_data(data_dict['session'], file)
     return data_dict
 
 # Function to extract data from the 'opto_combined' structure
 def extract_opto_combined(data, file):
-    opto_combined = data['opto_combined']
+    opto_combined = data['opto_combinedVS']
     extracted_data = []
 
     # Create a dictionary to hold all columns of the dataframe
@@ -144,7 +146,7 @@ df_opto_combined = ensure_serializable(df_opto_combined)
 
 # Explode only the 'data' column in the DataFrame
 print("Exploding specific columns in the DataFrame...")
-columns_to_explode = ['data',"duration","session_id"]  # Specify which columns to explode
+columns_to_explode = ['data',"duration","session_id","session"]  # Specify which columns to explode
 df_opto_combined = explode_specific_columns(df_opto_combined, columns_to_explode)
 
 # Reset the index to ensure no duplicate index values
@@ -152,7 +154,7 @@ df_opto_combined.reset_index(drop=True, inplace=True)
 
 # Save the DataFrame to a pickle file
 print("Saving DataFrame to a pickle file...")
-pickle_filename = 'df_opto_combined.pkl'
+pickle_filename = 'df_opto_combined_from.pkl'
 with open(pickle_filename, 'wb') as f:
     pickle.dump(df_opto_combined, f)
 print(f"Saved DataFrame to {pickle_filename}")
@@ -160,3 +162,4 @@ print(f"Saved DataFrame to {pickle_filename}")
 # Optionally, display the DataFrame
 print("DataFrame for opto_combined:")
 print(df_opto_combined.head())
+print(df_opto_combined.columns)
