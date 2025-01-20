@@ -14,10 +14,11 @@ from sklearn.metrics import mean_squared_error
 import metrics_analysis as m_a
 from scipy.signal import savgol_filter
 from scipy.signal import resample
+import seaborn as sns
 
 # Load the dataframe
 PICKLE_FILE_PATH_DS = 'data/df_combined_vs.pkl'
-TEMPLATE_FILE_PATH = 'data/Templates/After_Cocaine_DS_mean_traces_dff.csv'
+TEMPLATE_FILE_PATH = 'data/Templates/After_Cocaine_VS_mean_traces_dff.csv'
 ORIGINAL_RATE = 1017.252625
 
 def load_template(template_file_path, dur):
@@ -133,7 +134,7 @@ def identify_bursts(signal, min_prominence, burst_window=0.1,original_rate=1000)
     # Filter spikes based on prominence
     prominent_spikes = detect_peaks(signal, min_prominence)
     prominent_spike_times = prominent_spikes  # Get the actual time indices of the prominent spikes
-    print(peak_prominences(signal, prominent_spike_times)[0])
+    #print(peak_prominences(signal, prominent_spike_times)[0])
     bursts = []
     current_burst = []
 
@@ -218,12 +219,22 @@ def resample_signal(signal, original_fs, target_fs):
 # Choose which method to use: OASIS, Template Matching, or Spike Simple
 use_method = "spike_simple"  # Options: "oasis", "template_matching", "spike_simple"
 
+burst_amplitudes = []
+non_burst_amplitudes = []
+all_amplitudes = []
+
+burst_durations = []
+non_burst_durations = []
+all_durations = []
+burst_frequencies = []
+non_burst_frequencies = []
+all_frequencies = []
 for signal_idx, signal in enumerate(signals):
     if use_method == "spike_simple":
         # Use spike and burst detection
         signal=resample_signal(signal, ORIGINAL_RATE, 1000)
-        signal=signal[132500:140000]
-        signal=m_a.robust_zscore(signal)
+        #signal=signal[132500:140000]
+        #signal_=m_a.robust_zscore(signal)
         signal=signal+abs(min(signal))
         
         prominences = 0 # Set your minimum amplitude threshold for peak detection
@@ -231,47 +242,163 @@ for signal_idx, signal in enumerate(signals):
         burst_window = int(0.001 * 1000)  # Convert time window to indices (e.g., 0.1 s)
         prominences = peak_prominences(signal, peaks)[0]
         #print(min_spike_amplitude)
-        bursts = identify_bursts(signal, min_prominence=0.8, burst_window=burst_window, original_rate=1000)
-        print(peaks)
-        print(prominences)
+        bursts = identify_bursts(signal, min_prominence=np.mean(prominences)+2.*np.std(prominences), burst_window=burst_window, original_rate=1000)
+        print(np.median(prominences)+np.std(prominences))
+        #print(prominences)
         # Find local minima in the reversed signal
         local_minima = find_local_minima(signal)
 
         # For each peak, find the local minima before and after it
         minima_around_peaks = []
         for peak in peaks:
-            # Find local minima before and after the peak
-            pre_minima = local_minima[local_minima < peak]
-            post_minima = local_minima[local_minima > peak]
-            
-            # If there are minima found, store the closest ones
-            if len(pre_minima) > 0:
-                nearest_pre_minima = pre_minima[-1]
-            else:
-                nearest_pre_minima = None
-            
-            if len(post_minima) > 0:
-                nearest_post_minima = post_minima[0]
-            else:
-                nearest_post_minima = None
-            
-            minima_around_peaks.append((peak, nearest_pre_minima, nearest_post_minima, signal[peak]))
+                # Calculate amplitude for each peak
+                amplitude = signal[peak]
+                
+                # Determine half-maximum level
+                half_max = amplitude / 2
+                
+                # Find left half-maximum crossing point
+                left_half_max = None
+                for i in range(peak, -1, -1):
+                    if signal[i] <= half_max:
+                        left_half_max = i
+                        break
+                
+                # Find right half-maximum crossing point
+                right_half_max = None
+                for i in range(peak, len(signal)):
+                    if signal[i] <= half_max:
+                        right_half_max = i
+                        break
+                
+                # Calculate FWHM if both crossing points are found
+                if left_half_max is not None and right_half_max is not None:
+                    fwhm = (right_half_max - left_half_max) / 1000  # Convert to seconds
+                    
+                    # Classify events into burst and non-burst
+                    if any(peak in burst for burst in bursts):  # If peak is part of a burst
+                        burst_amplitudes.append(amplitude)
+                        burst_durations.append(fwhm)
+                    else:
+                        non_burst_amplitudes.append(amplitude)
+                        non_burst_durations.append(fwhm)
+                    
+                    # Store values for all events
+                    all_amplitudes.append(amplitude)
+                    all_durations.append(fwhm)
+
 
         # Display the peaks, local minima, and peak amplitudes
-        print(minima_around_peaks)
-
-        # Create a time vector for plotting
-        time_vector = np.arange(len(signal)) / 1000
+        burst_amp = [signal[peak] for burst in bursts for peak in burst]
+        non_burst_amp = [signal[peak] for peak in peaks if not any(peak in burst for burst in bursts)]
+        all_amp = [signal[peak] for peak in peaks]
+        
+        burst_amplitudes.extend(burst_amp)
+        non_burst_amplitudes.extend(non_burst_amp)
+        all_amplitudes.extend(all_amp)
+        
+        burst_dur = [(burst[-1] - burst[0]) / 1000 for burst in bursts]  # in seconds
+        non_burst_dur = [(peaks[i+1] - peaks[i]) / 1000 for i in range(len(peaks) - 1) if not any(peaks[i] in burst for burst in bursts)]
+        all_dur = [(peaks[i+1] - peaks[i]) / 1000 for i in range(len(peaks) - 1)]
+        
+        burst_durations.extend(burst_dur)
+        non_burst_durations.extend(non_burst_dur)
+        all_durations.extend(all_dur)
+        total_time = len(signal) / 1000  # Sampling rate is 1000 Hz
+        
+        # Number of bursts
+        num_bursts = len(bursts)
+        
+        # Number of burst spikes
+        num_burst_spikes = sum(len(burst) for burst in bursts)
+        
+        # Number of non-burst spikes
+        non_burst_spikes = [peak for peak in peaks if not any(peak in burst for burst in bursts)]
+        num_non_burst_spikes = len(non_burst_spikes)
+        
+        # Total number of spikes
+        num_all_spikes = len(peaks)
+        
+        # Calculate frequencies
+        burst_frequency = num_bursts / total_time  # Bursts per second
+        non_burst_frequency = num_non_burst_spikes / total_time  # Non-burst spikes per second
+        all_spike_frequency = num_all_spikes / total_time  # Spikes per second
+        
+        # Append frequencies to lists
+        burst_frequencies.append(burst_frequency)
+        non_burst_frequencies.append(non_burst_frequency)
+        all_frequencies.append(all_spike_frequency)
 
         # Plot the results for each individual
-        plt.figure(figsize=(12, 6))
-        plt.plot(time_vector, signal, label='DF/F')
+        #plt.figure(figsize=(12, 6))
+        #plt.plot(time_vector, signal, label='DF/F')
 
 
         # Plot the detected peaks (spikes)
-        plt.plot(time_vector[peaks], signal[peaks], "x")
+        #plt.plot(time_vector[peaks], signal[peaks], "x")
         # Plot burst markers for "spike_simple"
-        for burst in bursts:
-            plt.eventplot(time_vector[burst], orientation='horizontal', colors='green', lineoffsets=-0.1, linelengths=0.1)
+        #for burst in bursts:
+        #    plt.eventplot(time_vector[burst], orientation='horizontal', colors='green', lineoffsets=-0.1, linelengths=0.1)
 
-        plt.show()
+        #plt.show()
+
+
+amplitude_data = {
+    "Event Type": ["Burst Firing Rate"] * len(burst_amplitudes) + 
+                  ["Non-Burst Firing Rate"] * len(non_burst_amplitudes) + 
+                  ["All Firing Rate"] * len(all_amplitudes),
+    "Amplitude": burst_amplitudes + non_burst_amplitudes + all_amplitudes
+}
+
+duration_data = {
+    "Event Type": ["Burst Firing Rate"] * len(burst_durations) + 
+                  ["Non-Burst Firing Rate"] * len(non_burst_durations) + 
+                  ["All Firing Rate"] * len(all_durations),
+    "Duration (s)": burst_durations + non_burst_durations + all_durations
+}
+frequency_data = {
+    "Event Type": ["Burst Frequency"] * len(burst_frequencies) + 
+                  ["Non-Burst Frequency"] * len(non_burst_frequencies) + 
+                  ["All Frequency"] * len(all_frequencies),
+    "Frequency (Hz)": burst_frequencies + non_burst_frequencies + all_frequencies
+}
+
+df_frequency = pd.DataFrame(frequency_data)
+print(len(burst_amplitudes))
+print(len(all_amplitudes))
+
+# Convert data to DataFrames for Seaborn
+df_amplitude = pd.DataFrame(amplitude_data)
+df_duration = pd.DataFrame(duration_data)
+
+# Plotting Amplitudes
+plt.figure(figsize=(12, 6), facecolor='black')
+ax = sns.swarmplot(x="Event Type", y="Amplitude", data=df_amplitude,  palette=["blue", "cyan", "green"])
+ax.set_title("Event Amplitudes Across Recordings", color='white')
+ax.set_facecolor('black')
+ax.set_xlabel("Event Type", color='white')
+ax.set_ylabel("Amplitude", color='white')
+ax.tick_params(axis='x', colors='white')
+ax.tick_params(axis='y', colors='white')
+plt.show()
+
+# Plotting Durations
+plt.figure(figsize=(12, 6), facecolor='black')
+ax = sns.swarmplot(x="Event Type", y="Duration (s)", data=df_duration,  palette=["blue", "cyan", "green"])
+ax.set_title("Event Durations Across Recordings", color='white')
+ax.set_facecolor('black')
+ax.set_xlabel("Event Type", color='white')
+ax.set_ylabel("Duration (s)", color='white')
+ax.tick_params(axis='x', colors='white')
+ax.tick_params(axis='y', colors='white')
+plt.show()
+
+plt.figure(figsize=(12, 6), facecolor='black')
+ax = sns.swarmplot(x="Event Type", y="Frequency (Hz)", data=df_frequency, palette=["blue", "cyan", "green"])
+ax.set_title("Event Frequencies Across Recordings", color='white')
+ax.set_facecolor('black')
+ax.set_xlabel("Event Type", color='white')
+ax.set_ylabel("Frequency (Hz)", color='white')
+ax.tick_params(axis='x', colors='white')
+ax.tick_params(axis='y', colors='white')
+plt.show()

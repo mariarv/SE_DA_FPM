@@ -86,15 +86,17 @@ for waveform_l in waveforms_df['waveforms']:
         
         # Merge both sets of metrics and add the duration
         trace_metrics.update(additional_trace_metrics)
-        
+        time=np.arange(len(trace)) / ORIGINAL_RATE
         # Append the trace metrics to the list
         metric_data_list.append(trace_metrics)
-        axes[0].plot(trace, color='gray', alpha=0.5, linewidth=0.8)  
+        axes[0].plot(time,trace, color='gray', alpha=0.5, linewidth=0.8)  
 
 
     waveform_array_truncated = np.array(truncated_waveform_)
-    axes[0].plot(mean_trace_se, color='green', linewidth=2, label='Mean Trace')  # Plot mean trace in red
-
+    axes[0].plot(time,mean_trace_se, color='green', linewidth=2, label='Mean Trace')  # Plot mean trace in red
+    axes[0].set_title('SE')
+    axes[0].set_xlabel('Time sec')
+    axes[0].set_ylabel('DF/F')
     #plt.plot(waveform_array_truncated.T)
     #plt.show()
 print(len(trace))
@@ -128,16 +130,16 @@ for i,duration in enumerate(durations):
         # Merge both sets of metrics and add the duration
         trace_metrics.update(additional_trace_metrics)
         trace_metrics.update({'Duration': duration})
-        
+        time=np.arange(len(trace)) / ORIGINAL_RATE
         # Append the trace metrics to the list
         metric_data_list_opto.append(trace_metrics)
-        axes[i+1].plot(trace, color='gray', alpha=0.5, linewidth=0.8)  
+        axes[i+1].plot(time,trace, color='gray', alpha=0.5, linewidth=0.8)  
         # Plot each trace with low opacity
-    axes[i+1].plot(mean_trace, color='red', linewidth=2, label='Mean Trace')  # Plot mean trace in red
+    axes[i+1].plot(time,mean_trace, color='red', linewidth=2, label='Mean Trace')  # Plot mean trace in red
     # Set subplot title and labels
-    axes[i+1].set_title(f'Duration: {duration}')
-    axes[i+1].set_xlabel('Time')
-    axes[i+1].set_ylabel('Amplitude')
+    axes[i+1].set_title(f'Duration: {duration} ms')
+    axes[i+1].set_xlabel('Time sec')
+    axes[i+1].set_ylabel('DF/F')
 plt.tight_layout()
 plt.legend()
 plt.show()

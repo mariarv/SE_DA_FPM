@@ -10,6 +10,8 @@ from sklearn.decomposition import PCA
 from mpl_toolkits.mplot3d import Axes3D
 import umap
 from scipy.optimize import curve_fit
+import seaborn as sns
+from scipy.stats import wilcoxon
 
 # Constants
 ORIGINAL_RATE = 1017.252625
@@ -95,17 +97,17 @@ def process_trace(data, fs, trace_type):
     
     if trace_type == 'base_before':
         processed_data = segment_data(resampled_data, fs,trace_type)['first_3min']  # First 3 minutes
-        processed_data = m_a.high_pass_filter(processed_data, fs)
+        #processed_data = m_a.high_pass_filter(processed_data, fs)
         processed_data = m_a.robust_zscore(processed_data)
     elif trace_type == 'opto_drug':
         processed_data = segment_data(resampled_data, fs,trace_type)['first_3min']  # First 3 minutes
-        processed_data = m_a.high_pass_filter(processed_data, fs)
+        #processed_data = m_a.high_pass_filter(processed_data, fs)
         processed_data = m_a.robust_zscore(processed_data)
     elif trace_type == 'base_after':
         processed_data = segment_data(resampled_data, fs,trace_type)
         for key in processed_data:
             processed_data[key] = processed_data[key]
-            processed_data[key] = m_a.high_pass_filter(processed_data[key], fs)
+            #processed_data[key] = m_a.high_pass_filter(processed_data[key], fs)
             #processed_data[key] = m_a.remove_trend_polyfit(processed_data[key])
             processed_data[key] = m_a.robust_zscore(processed_data[key])
     else:
@@ -117,7 +119,8 @@ def process_trace(data, fs, trace_type):
 def compute_spectrum_with_confidence(segments, fs, nperseg=4096, noverlap=3072, max_freq=30, confidence=0.95):
     # Store all power spectra
     all_psds = []
-    
+    noverlap = nperseg * 3 // 4
+
     for segment in segments:
         freqs, power_dB = m_a.compute_power_spectrum_dB(segment, fs, nperseg=nperseg, noverlap=noverlap, max_freq=max_freq)
         all_psds.append(power_dB)
@@ -137,29 +140,51 @@ def compute_spectrum_with_confidence(segments, fs, nperseg=4096, noverlap=3072, 
     return freqs, mean_psd, lower_bound, upper_bound
 
 def plot_spectrum_with_confidence_envelopes(segments_vs, ids_vs, segments_ds, ids_ds, fs, segment_name, drug_name):
-    plt.figure(figsize=(14, 10))
-    
-    # Define color palette for consistent coloring across animals
-    colors = plt.get_cmap('tab10', max(len(segments_vs), len(segments_ds)))
-    
+    plt.figure(figsize=(14, 10), facecolor='black')
+
+    # Get current axes and set its background color to black
+    ax = plt.gca()
+    ax.set_facecolor('black')
+
     # VS: Calculate and plot mean spectrum with confidence envelopes
     freqs_vs, mean_psd_vs, lower_vs, upper_vs = compute_spectrum_with_confidence(segments_vs, fs)
-    plt.plot(freqs_vs, mean_psd_vs, color='blue', label='VS Mean Spectrum')
-    plt.fill_between(freqs_vs, lower_vs, upper_vs, color='blue', alpha=0.2, label='VS Confidence Envelope')
-    plt.title(f'VS {segment_name.replace("_", " ").capitalize()} - Spectrum with Confidence ({drug_name})')
-    plt.xlabel('Frequency (Hz)')
-    plt.ylabel('Power (dB)')
-    plt.legend(loc='upper right')
-    
-    freqs_ds, mean_psd_ds, lower_ds, upper_ds = compute_spectrum_with_confidence(segments_ds, fs)
-    plt.plot(freqs_ds, mean_psd_ds, color='orange', label='DS Mean Spectrum')
-    plt.fill_between(freqs_ds, lower_ds, upper_ds, color='orange', alpha=0.2, label='DS Confidence Envelope')
-    plt.title(f'DS {segment_name.replace("_", " ").capitalize()} - Spectrum with Confidence ({drug_name})')
-    plt.xlabel('Frequency (Hz)')
-    plt.ylabel('Power (dB)')
-    plt.legend(loc='upper right')
+    plt.plot(freqs_vs, mean_psd_vs, color='yellow', label='VS Mean Spectrum')
+    plt.fill_between(freqs_vs, lower_vs, upper_vs, color='yellow', alpha=0.2, label='VS Confidence Envelope')
 
-    freqs_ds_base, mean_psd_ds, lower_ds, upper_ds = compute_spectrum_with_confidence(segments_ds, fs)
+    # Set title and labels with white color
+    plt.title(f'VS {segment_name.replace("_", " ").capitalize()} - Spectrum with Confidence ({drug_name})', color='white')
+    plt.xlabel('Frequency (Hz)', color='white')
+    plt.ylabel('Power (dB)', color='white')
+
+    # Customize tick parameters to be white
+    ax.tick_params(axis='both', colors='white')
+
+    # Set spine colors to white
+    for spine in ax.spines.values():
+        spine.set_edgecolor('white')
+
+    # Customize the legend
+    legend = plt.legend(loc='upper right')
+    # Set legend text color to white
+    for text in legend.get_texts():
+        text.set_color('white')
+    # Set legend background to black
+    legend.get_frame().set_facecolor('black')
+    # Set legend edge color to white
+    legend.get_frame().set_edgecolor('white')
+
+    # Optional: Adjust grid lines if you have them
+    # ax.grid(True, color='gray')
+    
+    #freqs_ds, mean_psd_ds, lower_ds, upper_ds = compute_spectrum_with_confidence(segments_ds, fs)
+    #plt.plot(freqs_ds, mean_psd_ds, color='orange', label='DS Mean Spectrum')
+    #plt.title(f'DS {segment_name.replace("_", " ").capitalize()} - Spectrum with Confidence ({drug_name})')
+    ##plt.fill_between(freqs_ds, lower_ds, upper_ds, color='orange', alpha=0.2, label='DS Confidence Envelope')
+    #plt.xlabel('Frequency (Hz)')
+    #plt.ylabel('Power (dB)')
+    #plt.legend(loc='upper right')
+
+    #freqs_ds_base, mean_psd_ds, lower_ds, upper_ds = compute_spectrum_with_confidence(segments_ds, fs)
 
     
     plt.tight_layout()
@@ -218,7 +243,7 @@ def plot_segment_analysis(segments_vs, ids_vs, segments_ds, ids_ds, fs, segment_
     # Bottom-left: VS power spectra in dB
     plt.subplot(2, 2, 3)
     for i, segment in enumerate(segments_vs):
-        freqs, power_dB =  m_a.compute_power_spectrum_dB(segment, fs)
+        freqs, power_dB =  m_a.compute_power_spectrum_dB(segment, fs,nperseg=4096)
         plt.plot(freqs, power_dB, color=colors(i), label=f'Animal {ids_vs[i]}')
     plt.title(f'VS {segment_name.replace("_", " ").capitalize()} - Power Spectrum (dB) ({drug_name})')
     plt.xlabel('log(Frequency (Hz)) ')
@@ -228,7 +253,7 @@ def plot_segment_analysis(segments_vs, ids_vs, segments_ds, ids_ds, fs, segment_
     # Bottom-right: DS power spectra in dB
     plt.subplot(2, 2, 4)
     for i, segment in enumerate(segments_ds):
-        freqs, power_dB =  m_a.compute_power_spectrum_dB(segment, fs)
+        freqs, power_dB =  m_a.compute_power_spectrum_dB(segment, fs, nperseg=4096)
         plt.plot(freqs, power_dB, color=colors(i), label=f'Animal {ids_ds[i]}')
     plt.title(f'DS {segment_name.replace("_", " ").capitalize()} - Power Spectrum (dB) ({drug_name})')
     plt.xlabel('log(Frequency (Hz))')
@@ -481,11 +506,11 @@ def plot_individual_spectra_second_segment(df_vs, df_ds, fs, drug1, drug2):
     individuals_ds = df_ds['file'].str[:9].unique()
 
     # Define color map for the two drugs
-    colors = {drug1: 'blue', drug2: 'orange'}
+    colors = {drug1: 'green', drug2: 'magenta'}
 
     # VS Plot
     num_individuals_vs = len(individuals_vs)
-    fig_vs, axes_vs = plt.subplots(nrows=num_individuals_vs, ncols=1, figsize=(10, 4 * num_individuals_vs))
+    fig_vs, axes_vs = plt.subplots(nrows=num_individuals_vs, ncols=1, figsize=(10, 4 * num_individuals_vs),  facecolor='black')
 
     for i, individual in enumerate(individuals_vs):
         ax = axes_vs[i] if num_individuals_vs > 1 else axes_vs
@@ -510,26 +535,32 @@ def plot_individual_spectra_second_segment(df_vs, df_ds, fs, drug1, drug2):
             # Calculate and plot spectra for the second 3-minute segment of 'base_after'
             if combined_segments_vs_after:
                 freqs_vs_after, mean_psd_vs_after, lower_vs_after, upper_vs_after = compute_spectrum_with_confidence(combined_segments_vs_after, fs)
-                mean_psd_before_normalized = normalize_curve(mean_psd_vs_after)
-                ax.plot(freqs_vs_after, mean_psd_before_normalized, label=f'{drug} After', color=colors[drug])
+                #mean_psd_before_normalized = normalize_curve(mean_psd_vs_after)
+                ax.plot(freqs_vs_after, mean_psd_vs_after, label=f'{drug} After', color=colors[drug])
                 ax.fill_between(freqs_vs_after, lower_vs_after, upper_vs_after, color=colors[drug], alpha=0.3)
-                A_after_vs, n_after_vs = fit_one_over_f(freqs_vs_after, mean_psd_before_normalized)
-                ax.plot(freqs_vs_after, normalize_curve(one_over_f(freqs_vs_after, A_after_vs, n_after_vs)), label=f'Fit 1/f (A={A_after_vs:.2f}, n={n_after_vs:.2f})', linestyle='--')
+                #A_after_vs, n_after_vs = fit_one_over_f(freqs_vs_after, mean_psd_before_normalized)
+                #ax.plot(freqs_vs_after, normalize_curve(one_over_f(freqs_vs_after, A_after_vs, n_after_vs)), label=f'Fit 1/f (A={A_after_vs:.2f}, n={n_after_vs:.2f})', linestyle='--')
 
-
+ 
             if combined_segments_vs_before:
                 freqs_vs_before, mean_psd_vs_before, lower_vs_before, upper_vs_before = compute_spectrum_with_confidence(combined_segments_vs_before, fs)
-                ax.plot(freqs_vs_before, normalize_curve(mean_psd_vs_before), label=f'{drug} Baseline', color="green")
-                ax.fill_between(freqs_vs_before, lower_vs_before, upper_vs_before, color="green", alpha=0.3)
+                ax.plot(freqs_vs_before, mean_psd_vs_before, label=f'{drug} Baseline', color="yellow")
+                #ax.fill_between(freqs_vs_before,  normalize_curve(mean_psd_vs_before), upper_vs_before, color="yellow", alpha=0.3)
+               # ax.set_xlabel('log(Frequency (Hz))', color='white')
+                #ax.set_ylabel('Power',color='white')
                 A_before, n_before = fit_one_over_f(freqs_vs_before, mean_psd_vs_before)
-                ax.plot(freqs_vs_before, normalize_curve(one_over_f(freqs_vs_before, A_before, 1)), label=f'Fit 1/f (A={A_before:.2f}, n={n_before:.2f})', linestyle='--')
+                #ax.plot(freqs_vs_before, normalize_curve(one_over_f(freqs_vs_before, A_before, 1)), label=f'Fit 1/f (A={A_before:.2f}, n={n_before:.2f})', linestyle='--')
         
         ax.set_title(f'VS Individual {individual} - Second 3min')
-        ax.set_xlabel('log(Frequency (Hz))')
-        ax.set_ylabel('Power')
-        ax.legend(loc='upper right')
-        ax.grid(True)
 
+        ax.set_facecolor('black')
+
+        ax.legend(loc='upper right')
+        #ax.grid(True)
+    # Customize tick colors and spines
+        ax.tick_params(axis='both', colors='white')
+        for spine in ax.spines.values():
+            spine.set_edgecolor('white')
     plt.tight_layout()
     plt.show()
 
@@ -592,7 +623,7 @@ def plot_pooled_spectra_with_baseline(df_vs, df_ds, fs):
     for drug in drugs:
         # Prepare the figure for each drug
         fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(14, 6))
-        fig.suptitle(f'Pooled Spectra with Baseline and {drug}', fontsize=16)
+        fig.suptitle(f'Pooled Spectra with Baseline and {drug}', fontsize=16, facecolor='black')
         
         # Initialize lists for segments
         segments_vs = []
@@ -625,8 +656,8 @@ def plot_pooled_spectra_with_baseline(df_vs, df_ds, fs):
         freqs_vs, mean_psd_vs, lower_vs, upper_vs = compute_spectrum_with_confidence(segments_vs, fs)
         axes[0].plot(freqs_vs_baseline, mean_psd_vs_baseline, label=f'VS Baseline', color='green')
         axes[0].fill_between(freqs_vs_baseline, lower_vs_baseline, upper_vs_baseline, color='green', alpha=0.3)
-        axes[0].plot(freqs_vs, mean_psd_vs, label=f'VS {drug}', color='blue')
-        axes[0].fill_between(freqs_vs, lower_vs, upper_vs, color='blue', alpha=0.3)
+        #axes[0].plot(freqs_vs, mean_psd_vs, label=f'VS {drug}', color='blue')
+        #axes[0].fill_between(freqs_vs, lower_vs, upper_vs, color='blue', alpha=0.3)
         axes[0].set_title('VS')
         axes[0].set_xlabel('Log(Frequency (Hz))')
         axes[0].set_ylabel('Power')
@@ -692,12 +723,12 @@ def combine_and_reduce_spectra(df_vs, df_ds, fs):
                 if len(row[condition]) > 0:
                     processed_data = process_trace(np.array(row[condition]), fs, condition)
                     if condition == 'base_before':
-                        freq,spectrum = m_a.compute_power_spectrum_dB(processed_data, fs)
+                        freq,spectrum = m_a.compute_power_spectrum_dB(processed_data, fs,nperseg=4096)
                         all_spectra.append(spectrum)
                         labels.append(f'VS_base_{row["file"]}')
                         markers.append('o')  # Circle for VS base
                     else:
-                        freq,spectrum = m_a.compute_power_spectrum_dB(processed_data['second_3min'], fs)
+                        freq,spectrum = m_a.compute_power_spectrum_dB(processed_data['second_3min'], fs,nperseg=4096)
                         all_spectra.append(spectrum)
                         labels.append(f'VS_{drug}_{row["file"]}')
                         markers.append('o')  # Circle for VS
@@ -708,12 +739,12 @@ def combine_and_reduce_spectra(df_vs, df_ds, fs):
                 if len(row[condition]) > 0:
                     processed_data = process_trace(np.array(row[condition]), fs, condition)
                     if condition == 'base_before':
-                        freq,spectrum = m_a.compute_power_spectrum_dB(processed_data, fs)
+                        freq,spectrum = m_a.compute_power_spectrum_dB(processed_data, fs,nperseg=4096)
                         all_spectra.append(spectrum)
                         labels.append(f'DS_base_{row["file"]}')
                         markers.append('*')  # Star for DS base
                     else:
-                        freq,spectrum = m_a.compute_power_spectrum_dB(processed_data['second_3min'], fs)
+                        freq,spectrum = m_a.compute_power_spectrum_dB(processed_data['second_3min'], fs,nperseg=4096)
                         all_spectra.append(spectrum)
                         labels.append(f'DS_{drug}_{row["file"]}')
                         markers.append('*')  # Star for DS
@@ -737,7 +768,7 @@ def combine_and_reduce_spectra(df_vs, df_ds, fs):
         if 'VS_base' in label:
             color = base_vs_color
         elif 'DS_base' in label:
-            color = base_ds_color
+            color = base_ds_color   
         else:
             # Assign the same color for both VS and DS of the same drug
             drug = label.split('_')[1]
@@ -800,6 +831,103 @@ def combine_and_reduce_spectra(df_vs, df_ds, fs):
 
 
 
+# Define the function to compute Coefficient of Variation (CV)
+def compute_cv(data):
+    mean = np.mean(data)
+    std_dev = np.std(data)
+    return std_dev  if mean != 0 else np.nan
+
+# Define the function to extract and compute CV for each segment of interest
+def extract_cv_for_segments(df, condition_name, segment_keys):
+    cvs = []
+    segment_labels = []
+    drug_labels = []
+
+    for index, row in df.iterrows():
+        if len(row[condition_name]) > 0:
+            processed_data = process_trace(np.array(row[condition_name]), TARGET_RATE, condition_name)
+            if 'base_before' in segment_keys:
+                segment = processed_data
+                cv_value = compute_cv(segment)
+                if not np.isnan(cv_value):
+                    cvs.append(cv_value)
+                    segment_labels.append('base_before')
+                    drug_labels.append(row['drug']) 
+            else:      
+                for key in segment_keys:
+                    if key in processed_data:
+                        segment = processed_data[key]
+                        cv_value = compute_cv(segment)
+                        if not np.isnan(cv_value):
+                            cvs.append(cv_value)
+                            segment_labels.append(key)
+                            drug_labels.append(row['drug'])
+    
+    return cvs, segment_labels, drug_labels
+
+# Function to prepare CV DataFrame for plotting
+def prepare_cv_dataframe(df_vs, drug1, drug2):
+    cvs_vs_base_before, segment_labels_vs_base_before, drug_labels_vs_base_before = extract_cv_for_segments(df_vs[df_vs['drug'].isin([drug1, drug2])], 'base_before', ['base_before'])
+    cvs_vs_second_3min, segment_labels_vs_second_3min, drug_labels_vs_second_3min = extract_cv_for_segments(df_vs[df_vs['drug'].isin([drug1, drug2])], 'base_after', ['second_3min'])
+
+    cvs_vs = cvs_vs_base_before + cvs_vs_second_3min
+    segment_labels_vs = segment_labels_vs_base_before + segment_labels_vs_second_3min
+    drug_labels_vs = drug_labels_vs_base_before + drug_labels_vs_second_3min
+
+    data = {
+        'CV': cvs_vs,
+        'Segment': segment_labels_vs,
+        'Condition': [f'{drug}_base_before' if segment == 'base_before' else f'{drug}_second_3min' for segment, drug in zip(segment_labels_vs, drug_labels_vs)]
+    }
+
+    return pd.DataFrame(data)
+
+
+# Function to create the swarm plot for CV
+def plot_cv_swarm(df_vs, segment_keys, drug1, drug2):
+    cv_df = prepare_cv_dataframe(df_vs, drug1, drug2)
+    
+    # Filter data for Drug 1 Base Before, Drug 1 Second 3min, Drug 2 Base Before, Drug 2 Second 3min conditions
+    cv_df_filtered = cv_df[cv_df['Condition'].isin([f'{drug1}_base_before', f'{drug1}_second_3min', f'{drug2}_base_before', f'{drug2}_second_3min'])]
+
+    # Set colors for Drug 1 Base Before, Drug 1 Second 3min, Drug 2 Base Before, Drug 2 Second 3min
+    palette = {
+        f'{drug1}_base_before': 'yellow',
+        f'{drug1}_second_3min': 'green',
+        f'{drug2}_base_before': 'yellow',
+        f'{drug2}_second_3min': 'magenta'
+    }
+    
+    # Create a swarm plot
+    plt.figure(figsize=(12, 8), facecolor='black')
+    ax = plt.gca()
+    ax.set_facecolor('black')
+    sns.swarmplot(x='Condition', y='CV', data=cv_df_filtered, palette=palette, dodge=True)
+    plt.title(f'CV for Each Condition and Segment', color='white')
+    plt.xlabel('Condition', color='white')
+    plt.ylabel('Variation', color='white')
+    ax.tick_params(colors='white')
+    unique_conditions = cv_df_filtered['Condition'].unique()
+    p_values = []
+    x_positions = []
+    for drug in [drug1, drug2]:
+        base_before_label = f'{drug}_base_before'
+        second_3min_label = f'{drug}_second_3min'
+        base_before_data = cv_df_filtered[cv_df_filtered['Condition'] == base_before_label]['CV']
+        second_3min_data = cv_df_filtered[cv_df_filtered['Condition'] == second_3min_label]['CV']
+        
+        # Perform Wilcoxon test if both conditions have matching pairs
+        if len(base_before_data) == len(second_3min_data):
+            stat, p_value = wilcoxon(base_before_data, second_3min_data)
+            p_values.append(p_value)
+            x_positions.append((unique_conditions.tolist().index(base_before_label) + unique_conditions.tolist().index(second_3min_label)) / 2)
+            plt.text(x_positions[-1], max(cv_df_filtered['CV']) * 1.1, f'p={p_value:.3f}', ha='center', color='white')
+
+    plt.tight_layout()
+    plt.savefig(f'results/CV_Swarm_Plot_mean_coc_fent_mean.pdf')
+    plt.show()
+
+
 # Main function to load data, process segments by drug, and plot results
 def main(pickle_file_path_vs, pickle_file_path_ds):
     # Load the DataFrames from the pickle files
@@ -815,18 +943,26 @@ def main(pickle_file_path_vs, pickle_file_path_ds):
     print("Analyzing combined opto_drug condition for all drugs...")
     #combine_and_plot_condition(df_vs, df_ds, fs, 'opto_drug')
     
-    print("Analyzing combined base_before condition for all drugs...")
-    combine_and_plot_condition(df_vs, df_ds, fs, 'base_before')
+    #print("Analyzing combined base_before condition for all drugs...")
+    #combine_and_plot_condition(df_vs, df_ds, fs, 'base_before')
     #print("Analyzing combined conditions for all drugs...")
 
     drug1 = 'Quinpirole'
     drug2 = 'Raclopride'
-    #combine_and_plot_spectra_with_envelopes_all_segments(df_vs, df_ds, fs, drug1, drug2)
+   # combine_and_plot_spectra_with_envelopes_all_segments(df_vs, df_ds, fs, drug1, drug2)
 
     #plot_pooled_spectra_with_baseline(df_vs, df_ds,fs)
     #combine_and_reduce_spectra(df_vs, df_ds, fs)
 
-    plot_individual_spectra_second_segment(df_vs, df_ds, fs, drug1, drug2)
+    #plot_individual_spectra_second_segment(df_vs, df_ds, fs, drug1, drug2)
+    plot_individual_spectra_second_segment(df_vs, df_ds, fs, "Cocaine", "Fentanyl")
+    # Define conditions and drugs to compare
+    segment_keys = ['first_3min', 'second_3min', 'last_3min']
+
+
+    # Assuming df_vs and df_ds are loaded from the pickled files
+    #plot_cv_swarm(df_vs, segment_keys, drug1, drug2)
+
 
 # Run the main function
 if __name__ == "__main__":

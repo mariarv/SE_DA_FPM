@@ -14,6 +14,10 @@ import logging
 import os 
 import matplotlib.cm as cm
 import math
+from scipy.stats import linregress
+from scipy.interpolate import interp1d
+from scipy.ndimage import percentile_filter
+import scipy.signal as signal
 
 def plot_raster(spike_trains, dt, max_time_ms=30000):
     """
@@ -1182,3 +1186,338 @@ def create_hankel_matrix(signal, window_size):
 def create_sliding_windows(signal, window_size, step_size):
     num_windows = (len(signal) - window_size) // step_size + 1
     return np.array([signal[i*step_size : i*step_size + window_size] for i in range(num_windows)])
+
+
+def contfilt_python(c, filtopt, autoresample=True, oversampf=10, nonlinphaseok=False):
+    """
+    c: dict (like a MATLAB 'cont' struct) with:
+       c['data']: 2D array of shape (num_samples, n_channels)
+       c['samplerate']: float
+       c['nbad_start'], c['nbad_end']: int
+       c['chanlabels']: list of str
+       c['name']: str
+    filtopt: dict specifying filter design, e.g.:
+       {
+         'filttype': 'lowpass',
+         'F': [0.1, 0.2],  # passband/stopband edges
+         'atten_db': 40,
+         'ripp_db': 1,
+         'name': 'myfilter'
+       }
+    autoresample: bool, emulate contfilt's auto downsampling for lowpass/bandpass
+    oversampf:   float, factor used to pick new samplerate
+    nonlinphaseok: bool, if False, we do single-pass linear-phase approach
+
+    returns:
+       c_out: new dict with filtered data
+       filt: dict describing the filter used
+    """
+
+    def design_fir_lowpass(f_pass, f_stop, fs, atten_db=40, pass_ripple_db=1, numtaps=200):
+        # A simplified FIR design using remez (like firpm in MATLAB).
+        nyq = fs * 0.5
+        pass_n = f_pass / nyq
+        stop_n = f_stop / nyq
+        delta_p = (10**(pass_ripple_db/20.0) - 1)/(10**(pass_ripple_db/20.0)+1)
+        delta_s = 10**(-atten_db/20.0)
+        bands = [0, pass_n, stop_n, 1.0]
+        desired = [1, 0]
+        weight = [1/delta_p, 1/delta_s]
+        taps = signal.remez(numtaps, bands, desired, weight=weight, fs=2.0)
+        return taps
+
+    def autoresample_data(data, fs, f_end, oversampf=10):
+        """Downsample if new_fs < fs."""
+        new_fs = max(2.0 * f_end * oversampf, 1.0)  # ensure not below 1 Hz
+        if new_fs >= fs:
+            return data, fs
+        # ratio
+        ratio = new_fs / fs
+        new_len = int(len(data)*ratio)
+        data_rs = signal.resample(data, new_len)
+        return data_rs, new_fs
+
+    c_out = dict(c)  # shallow copy
+    dat = c_out['data']
+    fs  = c_out['samplerate']
+
+    filttype = filtopt['filttype'].lower()
+    freqspec = filtopt['F']
+    atten_db = filtopt.get('atten_db', 40)
+    ripp_db  = filtopt.get('ripp_db', 1)
+    f_name   = filtopt.get('name', 'filt')
+
+    # Possibly downsample
+    if autoresample and filttype in ['lowpass', 'bandpass']:
+        # highest frequency in freqspec is likely the stopband
+        highest_edge = freqspec[-1]
+        dat, fs_new = autoresample_data(dat, fs, highest_edge, oversampf=oversampf)
+        c_out['samplerate'] = fs_new
+
+    # For demonstration, handle only 'lowpass' with 2 frequencies [pass, stop]
+    # Expand to bandpass, etc., as needed.
+    if filttype == 'lowpass':
+        if len(freqspec) != 2:
+            raise ValueError("For 'lowpass', we expect F to have 2 elements [f_pass, f_stop].")
+        f_pass, f_stop = freqspec
+        taps = design_fir_lowpass(f_pass, f_stop, fs=c_out['samplerate'],
+                                  atten_db=atten_db, pass_ripple_db=ripp_db)
+    else:
+        raise NotImplementedError("Only 'lowpass' example is implemented here.")
+
+    # single-pass linear-phase approach (group delay = len(taps)/2)
+    # rather than filtfilt
+    filtlen = len(taps)
+    delay = filtlen // 2
+
+    out = np.zeros_like(dat)
+    for ch in range(dat.shape[1]):
+        tmp = signal.lfilter(taps, [1], dat[:, ch])
+        # shift
+        tmp[:-delay] = tmp[delay:]
+        tmp[-delay:] = 0
+        out[:, ch] = tmp
+
+    c_out['data'] = out
+    # mark edges bad
+    c_out['nbad_start'] += filtlen
+    c_out['nbad_end']   += filtlen
+
+    # rename
+    c_out['name'] = f"{c_out['name']}_F_{f_name}"
+    new_chlabels = []
+    for label in c_out['chanlabels']:
+        new_chlabels.append(f"{label}_F_{f_name}")
+    c_out['chanlabels'] = new_chlabels
+
+    # build a filter dictionary to return
+    filt = {
+        'dfilt': taps,
+        'filtopt': filtopt
+    }
+
+    return c_out, filt
+
+
+
+import numpy as np
+
+import numpy as np
+import scipy.signal as signal
+
+def continterp_python(c_in,
+                      timewin=None,
+                      samplerate=None,
+                      nsamps=None,
+                      method='linear',
+                      extrapval=np.nan):
+    """
+    Mimic MATLAB's continterp:
+     - c_in: dict (like a 'cont struct')
+       must have c_in['data'], c_in['samplerate'], c_in['tstart'], c_in['tend']
+     - timewin: [start_time, end_time]  (default: [c_in.tstart, c_in.tend])
+     - samplerate or nsamps: exactly one must be provided
+     - method: interpolation method ('linear', 'nearest', 'pchip', etc.)
+     - extrapval: value for extrapolation outside data range
+
+    returns c_out with upsampled data and adjusted metadata
+    """
+    # 1) Copy over existing data/fields
+    c_out = dict(c_in)
+    data_in = c_in['data']
+    fs_in = c_in['samplerate']
+    start_in = c_in['tstart']
+    end_in = c_in['tend']
+    if timewin is None:
+        timewin = [start_in, end_in]
+
+    # 2) Decide on new sample times
+    if (samplerate is None and nsamps is None) or (samplerate is not None and nsamps is not None):
+        raise ValueError("Must provide exactly one of 'samplerate' or 'nsamps'")
+
+    if samplerate is not None:
+        duration = timewin[1] - timewin[0]
+        nsamps_new = int(np.round(duration * samplerate)) + 1
+    else:
+        nsamps_new = nsamps
+        samplerate = (nsamps_new - 1) / (timewin[1] - timewin[0])
+
+    # 3) Build x-coordinates for old data
+    old_t = np.linspace(start_in, end_in, data_in.shape[0])
+
+    # 4) Build x-coordinates for new data
+    new_t = np.linspace(timewin[0], timewin[1], nsamps_new)
+
+    # 5) Interpolate each channel
+    nchan = data_in.shape[1]
+    data_out = np.zeros((nsamps_new, nchan), dtype=data_in.dtype)
+
+    for ch in range(nchan):
+        # If you want 'pchip'-like behavior, you might need
+        # interp1d(... kind='cubic' or 'quadratic') or a 'pchip' approach from other libs.
+        data_out[:, ch] = np.interp(new_t, old_t, data_in[:, ch], left=extrapval, right=extrapval)
+
+    # 6) Update c_out
+    c_out['data'] = data_out
+    c_out['tstart'] = new_t[0]
+    c_out['tend']   = new_t[-1]
+    c_out['samplerate'] = samplerate
+
+    # Could refine nbad_start/nbad_end, but let's keep it simple
+    # c_out['nbad_start'] = ...
+    # c_out['nbad_end'] = ...
+    return c_out
+
+
+
+def FP_normalize_RVZv2(
+    c_Mag,
+    control_LP_F=[0.1, 0.2],
+    norm_type='fit',
+    rig_baseline_V=[0, 0],
+    dFF_zero_prctile=1,
+    original_timewin=False
+):
+    """
+    Python approximation of the MATLAB function FP_normalize_RVZv2,
+    but now using 'contfilt_python' for the filtering step
+    to mimic 'contfilt' from MATLAB.
+
+    ...
+    (Docstring truncated for brevity)
+    """
+
+    # 1) Basic checks
+    if control_LP_F is None or len(control_LP_F) != 2:
+        raise ValueError("Must provide a [pass_freq, stop_freq] for 'control_LP_F', e.g. [0.1, 0.2]")
+    if len(rig_baseline_V) != 2:
+        raise ValueError("rig_baseline_V must be two values [offset_ch0, offset_ch1]")
+
+    data        = c_Mag['data'].copy()
+    samplerate  = c_Mag['samplerate']
+    tstart      = c_Mag['tstart']
+    tend        = c_Mag['tend']
+    bl_start    = c_Mag['bl_start']
+    bl_end      = c_Mag['bl_end']
+    ch_labels   = c_Mag['chanlabels']
+    name        = c_Mag['name']
+    nbad_start  = c_Mag.get('nbad_start', 0)
+    nbad_end    = c_Mag.get('nbad_end', 0)
+    max_tserr   = c_Mag.get('max_tserr', 0)
+
+    # Channel indices
+    ch_sig = 0  # 470
+    ch_iso = 1  # 405
+
+    # Subtract rig baseline from each channel
+    data[:, ch_sig] -= rig_baseline_V[0]
+    data[:, ch_iso] -= rig_baseline_V[1]
+
+    # Put updated data back in c_Mag for filtering
+    c_Mag_filtered = dict(c_Mag)  # shallow copy
+    c_Mag_filtered['data'] = data
+
+    # 2) Build a 'filtopt' dict for contfilt_python
+    #    We pretend this is like mkfiltopt('filttype','lowpass','F',[...],'atten_db',40,'ripp_db',1)
+    fopt_lp = {
+        'filttype': 'lowpass',
+        'F': control_LP_F,
+        'atten_db': 40,
+        'ripp_db': 1,
+        'name': 'isosbestic'
+    }
+
+    # 3) Filter the entire c_Mag with contfilt_python
+    #    (emulates contfilt(..., 'filtopt', fopt_lp, 'autoresample', true))
+    c_Mag_F_ds, filt_used = contfilt_python(
+        c_Mag_filtered,
+        filtopt=fopt_lp,
+        autoresample=False,   # matches 'autoresample'
+        oversampf=10,
+        nonlinphaseok=False
+    )
+
+    c_Mag_F = continterp_python(
+        c_Mag_F_ds,
+        timewin=[c_Mag['tstart'], c_Mag['tend']],
+        samplerate=c_Mag['samplerate'],   # match original samplerate
+        method='linear',                  # or 'nearest', or 'pchip', etc.
+        extrapval=0
+)
+
+    # 4) c_Mag_F now has a new sample rate (possibly), plus filtered data in channel 1.
+    control_filt = c_Mag_F['data'][:, ch_iso]   # The new, filtered isosbestic
+    signal_orig  = c_Mag_F['data'][:, ch_sig]   # 470 remains unfiltered in this example,
+                                                # but you could filter it if you want.
+
+    # Because c_Mag_F might have changed samplerate or length,
+    # we need to adjust bl_start/bl_end if they were originally for the old data.
+    # For simplicity, assume the same indices are okay if there's no major resample done.
+
+    # 5) Regress based on the baseline window
+    Y  = signal_orig[bl_start:bl_end]
+    XX = control_filt[bl_start:bl_end]
+    bls = np.polyfit(XX, Y, 1)  # slope, intercept
+    Y_fit_all = np.polyval(bls, control_filt)
+
+    # 6) Delta F
+    Y_dF_all = signal_orig - Y_fit_all
+
+    # 7) Normalization
+    if norm_type == 'const':
+        mean_baseline = np.mean(Y)  
+        Y_dFF_all = Y_dF_all / mean_baseline
+        suffix = 'dFF'
+    elif norm_type == 'fit':
+        Y_fit_safe = np.where(Y_fit_all == 0, 1e-12, Y_fit_all)
+        Y_dFF_all = Y_dF_all / Y_fit_safe
+        suffix = 'dFF'
+    elif norm_type == 'none':
+        Y_dFF_all = Y_dF_all
+        suffix = 'dF'
+    else:
+        raise ValueError(f"Unrecognized norm_type: {norm_type}")
+
+    # 8) Optional baseline shift
+    nbad_start_f = c_Mag_F.get('nbad_start', 0)
+    nbad_end_f   = c_Mag_F.get('nbad_end', 0)
+    if dFF_zero_prctile is not None:
+        valid_idx = np.arange(nbad_start_f, len(Y_dFF_all)-nbad_end_f)
+        if len(valid_idx) > 0:
+            shift_val = np.percentile(Y_dFF_all[valid_idx], dFF_zero_prctile)
+            Y_dFF_all -= shift_val
+
+    # 9) Build c_out
+    c_out = {
+        'name': f"{name}_{suffix}",
+        'chanlabels': [f"{ch_labels[ch_sig]}_vs_{ch_labels[ch_iso]}_{suffix}"],
+        'samplerate': c_Mag_F['samplerate'],  # might be changed by autoresample
+        'tstart': c_Mag_F['tstart'],
+        'tend':   c_Mag_F['tend'],
+        'nbad_start': nbad_start_f,
+        'nbad_end':   nbad_end_f,
+        'max_tserr':  max_tserr,
+        'data':       Y_dFF_all
+    }
+
+    # If we want to mirror the behavior of contwin(...,'samps_good') for original_timewin=False
+    if not original_timewin:
+        c_out['data'] = c_out['data'][nbad_start_f : len(Y_dFF_all)-nbad_end_f]
+        dur = c_out['tend'] - c_out['tstart']
+        total_samps = len(Y_dFF_all)
+        valid_samps = len(c_out['data'])
+        frac_start = nbad_start_f / total_samps
+        frac_end   = nbad_end_f   / total_samps
+        c_out['tstart'] += frac_start * dur
+        c_out['tend']   -= frac_end   * dur
+
+    # Return the final result
+    # c_Regress is optional: we can store or skip
+    c_Regress = {
+        'data': np.column_stack((signal_orig, control_filt)),
+        'chanlabels': ['Y_signal', 'XX_isosbestic_control'],
+        'nbad_start': nbad_start_f,
+        'nbad_end':   nbad_end_f
+    }
+
+    return c_out, c_Regress, bls, Y_fit_all

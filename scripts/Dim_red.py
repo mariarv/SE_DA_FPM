@@ -120,48 +120,87 @@ for (signal_idx_before, row_before), (signal_idx_after, row_after) in zip(groupe
         umap_before = U
         U_, S_, Vt_ = np.linalg.svd(H_after_flat, full_matrices=False)
         umap_after = U_
+        fig = plt.figure(figsize=(10, 10), facecolor='black')
 
-        fig = plt.figure(figsize=(10, 10))
-        
         # Create 3D subplots for before and after
-        ax_before = fig.add_subplot(2, 2, 3, projection='3d')
-        ax_after = fig.add_subplot(2, 2, 4, projection='3d')
-        
-        # Plot the t-SNE results for before
-        ax_before.plot(umap_before[:, 0], umap_before[:, 1], umap_before[:, 2],  marker='o', markersize=1, linestyle='-', color='blue')
-        ax_before.set_title(f'PCT Before Signal for {drug}')
-        ax_before.set_xlabel('PCT 1')
-        ax_before.set_ylabel('PCT 2')
-        ax_before.set_zlabel('PCT 3')
-        
-        # Plot the t-SNE results for after
-        ax_after.plot(umap_after[:, 0], umap_after[:, 1], umap_after[:, 2], marker='o', markersize=1, linestyle='-', color='red')
-        ax_after.set_title(f'PCT After Signal {drug}')
-        ax_after.set_xlabel('PCT 1')
-        ax_after.set_ylabel('PCT 2')
-        ax_after.set_zlabel('PCT 3')
+        ax_before = fig.add_subplot(2, 2, 3, projection='3d', facecolor='black')
+        ax_after = fig.add_subplot(2, 2, 4, projection='3d', facecolor='black')
+        # Set the background color for 3D panes to black by adjusting the pane colors
+        for ax in [ax_before, ax_after]:
+            # Set pane colors to black
+            ax.xaxis.pane.fill = True
+            ax.xaxis.pane.set_facecolor('black')
+            ax.yaxis.pane.fill = True
+            ax.yaxis.pane.set_facecolor('black')
+            ax.zaxis.pane.fill = True
+            ax.zaxis.pane.set_facecolor('black')
 
+            # Set pane edges (grid lines) to black to make them invisible
+            ax.xaxis._axinfo['grid'].update(color='black')
+            ax.yaxis._axinfo['grid'].update(color='black')
+            ax.zaxis._axinfo['grid'].update(color='black')
 
-        ax_time_before = fig.add_subplot(2, 2, 1)
-        ax_time_after = fig.add_subplot(2, 2, 2)
-        
-        ax_time_before.plot(time_points, signal_before, color='blue')
-        ax_time_before.set_title(f'Time Series Before Signal for {drug}')
-        ax_time_before.set_xlabel('Time')
-        ax_time_before.set_ylabel('Amplitude')
-        
-        ax_time_after.plot(time_points, signal_after, color='red')
-        ax_time_after.set_title(f'Time Series of After Signal for {drug}')
-        ax_time_after.set_xlabel('Time')
-        ax_time_after.set_ylabel('Amplitude')
-        
+            # Disable the grid explicitly
+            ax.grid(False)
+        ax_before.set_axis_off()
+
+        # Plot the 3D results for before
+        ax_before.plot(umap_before[:, 0], umap_before[:, 1], umap_before[:, 2], marker='o', markersize=1, linestyle='-', color='yellow')
+        ax_before.set_title(f'PCT Before Signal for {drug}', color='white')
+        #ax_before.set_xlabel('PCT 1', color='white')
+        #ax_before.set_ylabel('PCT 2', color='white')
+       # ax_before.set_zlabel('PCT 3', color='white')
+        #ax_before.w_xaxis.set_pane_color((0, 0, 0, 1))
+        #ax_before.w_yaxis.set_pane_color((0, 0, 0, 1))
+        #ax_before.w_zaxis.set_pane_color((0, 0, 0, 1))
+        #ax_before.tick_params(axis='both', colors='white')
+        ax_before.grid(False)
+
+        # Plot the 3D results for after
+        ax_after.plot(umap_after[:, 0], umap_after[:, 1], umap_after[:, 2], marker='o', markersize=1, linestyle='-', color='green')
+        ax_after.set_title(f'PCT After Signal {drug}', color='white')
+        #ax_after.set_xlabel('PCT 1', color='white')
+        #ax_after.set_ylabel('PCT 2', color='white')
+        #ax_after.set_zlabel('PCT 3', color='white')
+        #ax_after.w_xaxis.set_pane_color((0, 0, 0, 1))
+        #ax_after.w_yaxis.set_pane_color((0, 0, 0, 1))
+        #ax_after.w_zaxis.set_pane_color((0, 0, 0, 1))
+        ax_after.tick_params(axis='both', colors='white')
+        ax_after.grid(False)
+        ax_after.set_axis_off()
+
+        # Create 2D subplots for time series before and after
+        ax_time_before = fig.add_subplot(2, 2, 1, facecolor='black')
+        ax_time_after = fig.add_subplot(2, 2, 2, facecolor='black')
+
+        # Plot the time series for before
+        ax_time_before.plot(time_points, signal_before, color='yellow')
+        ax_time_before.set_title(f'Time Series Before Signal for {drug}', color='white')
+        ax_time_before.set_xlabel('Time', color='white')
+        ax_time_before.set_ylabel('Amplitude', color='white')
+        ax_time_before.tick_params(axis='both', colors='white')
+        for spine in ax_time_before.spines.values():
+            spine.set_edgecolor('white')
+
+        # Plot the time series for after
+        ax_time_after.plot(time_points, signal_after, color='green')
+        ax_time_after.set_title(f'Time Series of After for {drug}', color='white')
+        #ax_time_after.set_xlabel('Time', color='white')
+        ax_time_after.set_ylabel('Amplitude', color='white')
+        ax_time_after.tick_params(axis='both', colors='white')
+        for spine in ax_time_after.spines.values():
+            spine.set_edgecolor('white')
+        ax_time_after.grid(False)
+        plt.tight_layout()
+        ax_before.grid(False)
+
         plt.tight_layout()
         plt.savefig(f'results/plots/POD_plots/VS_POD_{ind[:9]}_{drug}.pdf')
         plt.show()
     
         v_before = np.gradient(signal_before, time_points)
         v_after = np.gradient(signal_after, time_points)
-        
+        """
         fig = plt.figure(figsize=(14, 12))
         
         # Create 3D subplots for before and after
@@ -194,7 +233,7 @@ for (signal_idx_before, row_before), (signal_idx_after, row_after) in zip(groupe
         
         plt.tight_layout()
         plt.savefig(f'results/plots/phase_plots/VS_Phase_plot_{ind[:9]}_{drug}.pdf')
-    
+        """
     
 combined_segments_df = pd.DataFrame(combined_segments_vs_after)
 print(combined_segments_df.shape)
